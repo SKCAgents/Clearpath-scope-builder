@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Cormorant+SC:wght@500;600&family=Figtree:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
@@ -14,7 +15,7 @@
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body, #root { height: 100%; }
   body { font-family: 'Figtree', sans-serif; background: #EFECE8; -webkit-font-smoothing: antialiased; }
-  input, textarea, button { font-family: inherit; }
+  input, textarea, button, select { font-family: inherit; }
   input::placeholder, textarea::placeholder { color: #C3BDB1; }
   ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #C3BDB1; border-radius: 3px; }
 
@@ -27,12 +28,10 @@
       position: static !important;
       width: 8.5in !important;
     }
-    /* @page size set dynamically via JS to match document height */
     @page { margin: 0; }
     * {
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
-      /* prevent any element-level page breaks */
       page-break-inside: avoid;
       break-inside: avoid;
     }
@@ -42,18 +41,15 @@
     }
   }
   #print-frame { display: none; }
-  /* Dynamic @page rule injected here at print time */
   #__page_size_style {}
 </style>
 </head>
 <body>
 <template id="__bundler_thumbnail" data-bg-color="#3F4E5A">
   <svg viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg">
-    <!-- ClearPath logo mark -->
     <circle cx="200" cy="90" r="52" stroke="#EFECE8" stroke-width="1.5" fill="none"/>
     <circle cx="200" cy="90" r="43" stroke="#EFECE8" stroke-width="0.8" fill="none"/>
     <text x="200" y="102" text-anchor="middle" font-family="Georgia,serif" font-size="30" font-weight="500" fill="#EFECE8" letter-spacing="-1">CP</text>
-    <!-- Scope lines suggestion -->
     <rect x="60" y="160" width="280" height="3" rx="1" fill="#83443D" opacity="0.9"/>
     <rect x="80" y="172" width="220" height="2" rx="1" fill="#EFECE8" opacity="0.3"/>
     <rect x="80" y="182" width="180" height="2" rx="1" fill="#EFECE8" opacity="0.3"/>
@@ -69,6 +65,7 @@
 <img id="__logo_wordmark" src="assets/ClearPath-Wordmark-Limestone.png" style="display:none" alt="">
 <img id="__logo_wordmark_blue" src="assets/ClearPath-Wordmark-Blue.png" style="display:none" alt="">
 
+<script src="supabase.js"></script>
 <script type="text/babel" src="ScopeLibrary.jsx"></script>
 <script type="text/babel" src="ScopeComponents.jsx"></script>
 <script type="text/babel" src="ScopeDocument.jsx"></script>
@@ -76,21 +73,25 @@
 <script type="text/babel">
 
 // ── Initialise state from library ────────────────────────────────────────────
-function initSections() {
-  return SCOPE_LIBRARY.map(s => ({
+function initSections(libraryData) {
+  const src = (libraryData?.sections?.length) ? libraryData.sections : SCOPE_LIBRARY;
+  return src.map(s => ({
     ...s,
     defaultOpen: false,
-    items: s.items.map((text, i) => ({
+    items: (s.items || []).map((text, i) => ({
       id: s.id + '_' + i,
-      text,
+      text: typeof text === 'string' ? text : String(text),
       included: false,
       custom: false,
     }))
   }));
 }
 
-function initExclusions() {
-  return EXCLUSION_LIBRARY.map((text, i) => ({ id: 'excl_' + i, text, included: false }));
+function initExclusions(libraryData) {
+  const src = (libraryData?.exclusions?.length)
+    ? libraryData.exclusions.map(e => e.text)
+    : EXCLUSION_LIBRARY;
+  return src.map((text, i) => ({ id: 'excl_' + i, text, included: false }));
 }
 
 const DEFAULT_ALLOWANCES = [
@@ -108,35 +109,20 @@ const DEFAULT_INFO = {
   deposit: '$15,000', depositMemo: '',
 };
 
-// ── Load / save to localStorage ──────────────────────────────────────────────
-function loadState() {
-  try {
-    const saved = localStorage.getItem('cp_scope_builder');
-    if (saved) return JSON.parse(saved);
-  } catch(e) {}
-  return null;
-}
-
-function saveState(state) {
-  try { localStorage.setItem('cp_scope_builder', JSON.stringify(state)); } catch(e) {}
-}
-
-// ── Main App ─────────────────────────────────────────────────────────────────
-function App() {
-  const saved = loadState();
-
+// ── Main App (accepts props from ProjectEditor) ───────────────────────────────
+function App({ initialState, onChange, libraryData, saveStatus, onBack }) {
   const [tab, setTab] = React.useState('build');
-  const [info, setInfo] = React.useState(saved?.info || DEFAULT_INFO);
-  const [sections, setSections] = React.useState(saved?.sections || initSections());
-  const [exclusions, setExclusions] = React.useState(saved?.exclusions || initExclusions());
-  const [allowances, setAllowances] = React.useState(saved?.allowances || DEFAULT_ALLOWANCES);
-  const [addOns, setAddOns] = React.useState(saved?.addOns || []);
+  const [info, setInfo] = React.useState(initialState?.info || DEFAULT_INFO);
+  const [sections, setSections] = React.useState(initialState?.sections || initSections(libraryData));
+  const [exclusions, setExclusions] = React.useState(initialState?.exclusions || initExclusions(libraryData));
+  const [allowances, setAllowances] = React.useState(initialState?.allowances || DEFAULT_ALLOWANCES);
+  const [addOns, setAddOns] = React.useState(initialState?.addOns || []);
   const [sideTab, setSideTab] = React.useState('sections');
   const [searchQ, setSearchQ] = React.useState('');
 
-  // Auto-save
+  // Notify parent of changes (auto-save handled by ProjectEditor)
   React.useEffect(() => {
-    saveState({ info, sections, exclusions, allowances, addOns });
+    if (onChange) onChange({ info, sections, exclusions, allowances, addOns });
   }, [info, sections, exclusions, allowances, addOns]);
 
   // Render print frame when previewing
@@ -205,7 +191,6 @@ function App() {
     setDragOver(null);
   }
 
-  // Add section modal state
   const [addingSectionName, setAddingSectionName] = React.useState('');
 
   const totalIncluded = sections.reduce((n, s) => n + s.items.filter(i => i.included).length, 0);
@@ -219,10 +204,20 @@ function App() {
       })).filter(s => s.items.length > 0 || s.title.toLowerCase().includes(searchQ.toLowerCase()))
     : sections;
 
+  // Save status label
+  const saveLabel = saveStatus === 'saving' ? 'Saving…' : saveStatus === 'pending' ? 'Unsaved' : saveStatus === 'error' ? 'Save failed' : 'Saved';
+  const saveColor = saveStatus === 'error' ? '#e07060' : saveStatus === 'saved' ? 'rgba(239,236,232,0.35)' : 'rgba(239,236,232,0.55)';
+
   // ── Top bar ──
   const topBar = React.createElement('div', {
     style: { background: C.slate, height: 52, display:'flex', alignItems:'center', padding:'0 20px', gap:16, flexShrink:0 }
   },
+    // Back to projects
+    onBack && React.createElement('button', {
+      onClick: onBack,
+      style: { fontFamily:"'Figtree',sans-serif", fontSize:10, letterSpacing:'0.12em', textTransform:'uppercase', fontWeight:400, background:'none', border:'none', cursor:'pointer', color:'rgba(239,236,232,0.55)', padding:'0 8px 0 0', display:'flex', alignItems:'center', gap:4 }
+    }, '← Projects'),
+    onBack && React.createElement('div', { style:{ width:1, height:20, background:'rgba(239,236,232,0.15)' } }),
     // Logo
     React.createElement('div', { style:{ display:'flex', alignItems:'center', gap:12 } },
       React.createElement('img', {
@@ -232,6 +227,10 @@ function App() {
       }),
       React.createElement('div', { style:{ fontFamily:"'Figtree', sans-serif", fontSize:8, letterSpacing:'0.28em', textTransform:'uppercase', color:'#C3BDB1' } }, 'Scope Builder')
     ),
+    // Save status
+    saveStatus && React.createElement('div', {
+      style: { fontFamily:"'Figtree',sans-serif", fontSize:9, letterSpacing:'0.12em', textTransform:'uppercase', color: saveColor }
+    }, saveLabel),
     React.createElement('div', { style:{ flex:1 } }),
     // Tabs
     ...['build', 'preview'].map(t =>
@@ -249,19 +248,16 @@ function App() {
     React.createElement('div', { style:{ width:1, height:20, background:'rgba(239,236,232,0.2)' } }),
     React.createElement('button', {
       onClick: () => {
-        // Make sure the document is rendered in the live DOM so we can clone its HTML
         setTab('preview');
         setTimeout(() => {
           const docEl = document.getElementById('scope-document');
           if (!docEl) { alert('Document not ready, try again.'); return; }
 
-          // Clone styles from the parent so the print window picks up Google Fonts
           const fontLinks = [...document.querySelectorAll('link[rel="stylesheet"], link[rel="preconnect"]')]
             .map(l => l.outerHTML).join('\n');
           const fontStyles = [...document.querySelectorAll('style')]
             .map(s => s.outerHTML).join('\n');
 
-          // Measure rendered height so we can size the page
           const measuredPx = docEl.getBoundingClientRect().height;
           const heightIn = Math.ceil((measuredPx / 96) * 100) / 100 + 0.15;
 
@@ -277,7 +273,6 @@ ${fontStyles}
 </style>
 </head><body>${docEl.outerHTML}
 <script>
-  // Wait for fonts to load before triggering print
   (document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve())
     .then(() => setTimeout(() => { window.focus(); window.print(); }, 300));
   window.onafterprint = () => window.close();
@@ -306,7 +301,7 @@ ${fontStyles}
       style:{ fontFamily:"'Figtree',sans-serif", fontSize:10, letterSpacing:'0.15em', textTransform:'uppercase', fontWeight:500, background:'transparent', color:'#EFECE8', border:'1px solid rgba(239,236,232,0.4)', padding:'6px 14px', cursor:'pointer' }
     }, 'Download .docx'),
     React.createElement('button', {
-      onClick: () => { if (confirm('Reset everything to a blank scope?')) { setSections(initSections()); setExclusions(initExclusions()); setInfo(DEFAULT_INFO); setAllowances(DEFAULT_ALLOWANCES); setAddOns([]); } },
+      onClick: () => { if (confirm('Reset everything to a blank scope?')) { setSections(initSections(libraryData)); setExclusions(initExclusions(libraryData)); setInfo(DEFAULT_INFO); setAllowances(DEFAULT_ALLOWANCES); setAddOns([]); } },
       style:{ fontFamily:"'Figtree',sans-serif", fontSize:10, letterSpacing:'0.15em', textTransform:'uppercase', fontWeight:400, background:'none', color:'rgba(239,236,232,0.4)', border:'1px solid rgba(239,236,232,0.2)', padding:'6px 12px', cursor:'pointer' }
     }, 'Reset')
   );
@@ -447,8 +442,7 @@ ${fontStyles}
   );
 }
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(React.createElement(App));
 </script>
+<script type="text/babel" src="app.jsx"></script>
 </body>
 </html>
