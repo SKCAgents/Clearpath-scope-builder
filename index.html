@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ClearPath — Scope Builder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Cormorant+SC:wght@500;600&family=Figtree:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body, #root { height: 100%; }
+  body { font-family: 'Figtree', sans-serif; background: #EFECE8; -webkit-font-smoothing: antialiased; }
+  input, textarea, button { font-family: inherit; }
+  input::placeholder, textarea::placeholder { color: #C3BDB1; }
+  ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #C3BDB1; border-radius: 3px; }
+
+  /* Print styles — single continuous page */
+  @media print {
+    html, body { background: white; height: auto !important; }
+    #builder-shell { display: none !important; }
+    #print-frame {
+      display: block !important;
+      position: static !important;
+      width: 8.5in !important;
+    }
+    /* @page size set dynamically via JS to match document height */
+    @page { margin: 0; }
+    * {
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      /* prevent any element-level page breaks */
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    #print-frame, #print-frame * {
+      page-break-inside: auto;
+      break-inside: auto;
+    }
+  }
+  #print-frame { display: none; }
+  /* Dynamic @page rule injected here at print time */
+  #__page_size_style {}
+</style>
+</head>
+<body>
+<template id="__bundler_thumbnail" data-bg-color="#3F4E5A">
+  <svg viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg">
+    <!-- ClearPath logo mark -->
+    <circle cx="200" cy="90" r="52" stroke="#EFECE8" stroke-width="1.5" fill="none"/>
+    <circle cx="200" cy="90" r="43" stroke="#EFECE8" stroke-width="0.8" fill="none"/>
+    <text x="200" y="102" text-anchor="middle" font-family="Georgia,serif" font-size="30" font-weight="500" fill="#EFECE8" letter-spacing="-1">CP</text>
+    <!-- Scope lines suggestion -->
+    <rect x="60" y="160" width="280" height="3" rx="1" fill="#83443D" opacity="0.9"/>
+    <rect x="80" y="172" width="220" height="2" rx="1" fill="#EFECE8" opacity="0.3"/>
+    <rect x="80" y="182" width="180" height="2" rx="1" fill="#EFECE8" opacity="0.3"/>
+    <rect x="80" y="192" width="200" height="2" rx="1" fill="#EFECE8" opacity="0.3"/>
+    <rect x="60" y="210" width="280" height="3" rx="1" fill="#83443D" opacity="0.6"/>
+    <rect x="80" y="222" width="160" height="2" rx="1" fill="#EFECE8" opacity="0.3"/>
+    <rect x="80" y="232" width="200" height="2" rx="1" fill="#EFECE8" opacity="0.3"/>
+  </svg>
+</template>
+<div id="root"></div>
+<div id="print-frame"></div>
+<img id="__logo_icon" src="assets/ClearPath-Icon-Limestone.png" style="display:none" alt="">
+<img id="__logo_wordmark" src="assets/ClearPath-Wordmark-Limestone.png" style="display:none" alt="">
+<img id="__logo_wordmark_blue" src="assets/ClearPath-Wordmark-Blue.png" style="display:none" alt="">
+
+<script type="text/babel" src="ScopeLibrary.jsx"></script>
+<script type="text/babel" src="ScopeComponents.jsx"></script>
+<script type="text/babel" src="ScopeDocument.jsx"></script>
+<script src="ScopeDocx.js"></script>
+<script type="text/babel">
+
+// ── Initialise state from library ────────────────────────────────────────────
+function initSections() {
+  return SCOPE_LIBRARY.map(s => ({
+    ...s,
+    defaultOpen: false,
+    items: s.items.map((text, i) => ({
+      id: s.id + '_' + i,
+      text,
+      included: false,
+      custom: false,
+    }))
+  }));
+}
+
+function initExclusions() {
+  return EXCLUSION_LIBRARY.map((text, i) => ({ id: 'excl_' + i, text, included: false }));
+}
+
+const DEFAULT_ALLOWANCES = [
+  { id: 'a1', label: 'Plumbing Fixtures', amount: '$20,000', desc: '' },
+  { id: 'a2', label: 'Decorative Lighting', amount: '$10,000', desc: '' },
+  { id: 'a3', label: 'Interior Trim', amount: '$32,000', desc: '' },
+  { id: 'a4', label: 'Cabinetry, Countertops & Backsplash', amount: '$102,000', desc: '' },
+  { id: 'a5', label: 'Appliances', amount: '$30,000', desc: '' },
+];
+
+const DEFAULT_INFO = {
+  projectName: '', clientName: '', address: '', date: '',
+  preparedBy: 'ClearPath Construction',
+  estimate: '', estimateLow: '', estimateHigh: '',
+  deposit: '$15,000', depositMemo: '',
+};
+
+// ── Load / save to localStorage ──────────────────────────────────────────────
+function loadState() {
+  try {
+    const saved = localStorage.getItem('cp_scope_builder');
+    if (saved) return JSON.parse(saved);
+  } catch(e) {}
+  return null;
+}
+
+function saveState(state) {
+  try { localStorage.setItem('cp_scope_builder', JSON.stringify(state)); } catch(e) {}
+}
+
+// ── Main App ─────────────────────────────────────────────────────────────────
+function App() {
+  const saved = loadState();
+
+  const [tab, setTab] = React.useState('build');
+  const [info, setInfo] = React.useState(saved?.info || DEFAULT_INFO);
+  const [sections, setSections] = React.useState(saved?.sections || initSections());
+  const [exclusions, setExclusions] = React.useState(saved?.exclusions || initExclusions());
+  const [allowances, setAllowances] = React.useState(saved?.allowances || DEFAULT_ALLOWANCES);
+  const [addOns, setAddOns] = React.useState(saved?.addOns || []);
+  const [sideTab, setSideTab] = React.useState('sections');
+  const [searchQ, setSearchQ] = React.useState('');
+
+  // Auto-save
+  React.useEffect(() => {
+    saveState({ info, sections, exclusions, allowances, addOns });
+  }, [info, sections, exclusions, allowances, addOns]);
+
+  // Render print frame when previewing
+  React.useEffect(() => {
+    if (tab === 'preview') {
+      const frame = document.getElementById('print-frame');
+      if (frame) {
+        const docEl = document.getElementById('scope-document');
+        if (docEl) frame.innerHTML = docEl.outerHTML;
+      }
+    }
+  }, [tab, info, sections, exclusions, allowances]);
+
+  function updateSectionItems(id, items) {
+    setSections(sects => sects.map(s => s.id === id ? { ...s, items } : s));
+  }
+
+  function toggleAll(id) {
+    setSections(sects => sects.map(s => {
+      if (s.id !== id) return s;
+      const allIncluded = s.items.every(i => i.included);
+      return { ...s, items: s.items.map(i => ({ ...i, included: !allIncluded })) };
+    }));
+  }
+
+  function moveSection(id, dir) {
+    setSections(sects => {
+      const idx = sects.findIndex(s => s.id === id);
+      if (idx < 0) return sects;
+      const newIdx = idx + dir;
+      if (newIdx < 0 || newIdx >= sects.length) return sects;
+      const arr = [...sects];
+      [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
+      return arr;
+    });
+  }
+
+  function deleteSection(id) {
+    setSections(sects => sects.filter(s => s.id !== id));
+  }
+
+  function addSection(title) {
+    const id = 'custom_' + Date.now();
+    setSections(sects => [...sects, { id, title, defaultOpen: true, items: [] }]);
+  }
+
+  // Drag-to-reorder state
+  const dragRef = React.useRef(null);
+  const [dragOver, setDragOver] = React.useState(null);
+
+  function onDragStart(id) { dragRef.current = id; }
+  function onDragEnter(id) { setDragOver(id); }
+  function onDragEnd() {
+    if (dragRef.current && dragOver && dragRef.current !== dragOver) {
+      setSections(sects => {
+        const arr = [...sects];
+        const fromIdx = arr.findIndex(s => s.id === dragRef.current);
+        const toIdx = arr.findIndex(s => s.id === dragOver);
+        if (fromIdx < 0 || toIdx < 0) return arr;
+        const [item] = arr.splice(fromIdx, 1);
+        arr.splice(toIdx, 0, item);
+        return arr;
+      });
+    }
+    dragRef.current = null;
+    setDragOver(null);
+  }
+
+  // Add section modal state
+  const [addingSectionName, setAddingSectionName] = React.useState('');
+
+  const totalIncluded = sections.reduce((n, s) => n + s.items.filter(i => i.included).length, 0);
+  const totalExclusions = exclusions.filter(e => e.included).length;
+
+  const filteredSections = searchQ
+    ? sections.map(s => ({
+        ...s,
+        items: s.items.filter(i => i.text.toLowerCase().includes(searchQ.toLowerCase())),
+        defaultOpen: true,
+      })).filter(s => s.items.length > 0 || s.title.toLowerCase().includes(searchQ.toLowerCase()))
+    : sections;
+
+  // ── Top bar ──
+  const topBar = React.createElement('div', {
+    style: { background: C.slate, height: 52, display:'flex', alignItems:'center', padding:'0 20px', gap:16, flexShrink:0 }
+  },
+    // Logo
+    React.createElement('div', { style:{ display:'flex', alignItems:'center', gap:12 } },
+      React.createElement('img', {
+        src: (document.getElementById('__logo_icon')||{}).src || 'assets/ClearPath-Icon-Limestone.png',
+        alt: 'ClearPath',
+        style: { height: 32, width: 'auto', display: 'block' }
+      }),
+      React.createElement('div', { style:{ fontFamily:"'Figtree', sans-serif", fontSize:8, letterSpacing:'0.28em', textTransform:'uppercase', color:'#C3BDB1' } }, 'Scope Builder')
+    ),
+    React.createElement('div', { style:{ flex:1 } }),
+    // Tabs
+    ...['build', 'preview'].map(t =>
+      React.createElement('button', {
+        key:t, onClick:()=>setTab(t),
+        style:{
+          fontFamily:"'Figtree',sans-serif", fontSize:10, letterSpacing:'0.15em', textTransform:'uppercase',
+          fontWeight:500, background:'none', border:'none', cursor:'pointer',
+          color: t===tab ? '#EFECE8' : 'rgba(239,236,232,0.45)',
+          borderBottom: t===tab ? '1px solid #EFECE8' : '1px solid transparent',
+          paddingBottom:2,
+        }
+      }, t === 'build' ? '← Build' : 'Preview →')
+    ),
+    React.createElement('div', { style:{ width:1, height:20, background:'rgba(239,236,232,0.2)' } }),
+    React.createElement('button', {
+      onClick: () => {
+        // Make sure the document is rendered in the live DOM so we can clone its HTML
+        setTab('preview');
+        setTimeout(() => {
+          const docEl = document.getElementById('scope-document');
+          if (!docEl) { alert('Document not ready, try again.'); return; }
+
+          // Clone styles from the parent so the print window picks up Google Fonts
+          const fontLinks = [...document.querySelectorAll('link[rel="stylesheet"], link[rel="preconnect"]')]
+            .map(l => l.outerHTML).join('\n');
+          const fontStyles = [...document.querySelectorAll('style')]
+            .map(s => s.outerHTML).join('\n');
+
+          // Measure rendered height so we can size the page
+          const measuredPx = docEl.getBoundingClientRect().height;
+          const heightIn = Math.ceil((measuredPx / 96) * 100) / 100 + 0.15;
+
+          const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${(info.projectName||'Scope of Work').replace(/[<>"]/g,'')} — Scope of Work</title>
+${fontLinks}
+${fontStyles}
+<style>
+  html, body { margin:0; padding:0; background:white; }
+  body { font-family: 'Figtree', sans-serif; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  @page { size: 8.5in ${heightIn}in; margin: 0; }
+  @media print { body { width: 8.5in; } }
+</style>
+</head><body>${docEl.outerHTML}
+<script>
+  // Wait for fonts to load before triggering print
+  (document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve())
+    .then(() => setTimeout(() => { window.focus(); window.print(); }, 300));
+  window.onafterprint = () => window.close();
+<\/script>
+</body></html>`;
+
+          const w = window.open('', '_blank', 'width=900,height=1100');
+          if (!w) { alert('Pop-up blocked. Please allow pop-ups for this site to export the PDF.'); return; }
+          w.document.open();
+          w.document.write(html);
+          w.document.close();
+        }, 400);
+      },
+      style:{ fontFamily:"'Figtree',sans-serif", fontSize:10, letterSpacing:'0.15em', textTransform:'uppercase', fontWeight:500, background:'#EFECE8', color:C.slate, border:'none', padding:'7px 16px', cursor:'pointer' }
+    }, 'Export PDF'),
+    React.createElement('button', {
+      onClick: async () => {
+        try {
+          await window.generateScopeDocx({ info, sections, exclusions, allowances, addOns });
+        } catch (err) {
+          console.error(err);
+          alert('Could not generate .docx — check console for details.');
+        }
+      },
+      title: 'Download as .docx — open in Google Docs to share/comment',
+      style:{ fontFamily:"'Figtree',sans-serif", fontSize:10, letterSpacing:'0.15em', textTransform:'uppercase', fontWeight:500, background:'transparent', color:'#EFECE8', border:'1px solid rgba(239,236,232,0.4)', padding:'6px 14px', cursor:'pointer' }
+    }, 'Download .docx'),
+    React.createElement('button', {
+      onClick: () => { if (confirm('Reset everything to a blank scope?')) { setSections(initSections()); setExclusions(initExclusions()); setInfo(DEFAULT_INFO); setAllowances(DEFAULT_ALLOWANCES); setAddOns([]); } },
+      style:{ fontFamily:"'Figtree',sans-serif", fontSize:10, letterSpacing:'0.15em', textTransform:'uppercase', fontWeight:400, background:'none', color:'rgba(239,236,232,0.4)', border:'1px solid rgba(239,236,232,0.2)', padding:'6px 12px', cursor:'pointer' }
+    }, 'Reset')
+  );
+
+  // ── BUILD VIEW ──
+  const buildView = React.createElement('div', { style:{ display:'flex', flex:1, overflow:'hidden' } },
+
+    // Left sidebar — Project info + allowances
+    React.createElement('div', {
+      style:{ width:260, flexShrink:0, background:'white', borderRight:`1px solid ${C.border}`, overflow:'auto', display:'flex', flexDirection:'column' }
+    },
+      // Tabs
+      React.createElement('div', { style:{ display:'flex', borderBottom:`1px solid ${C.border}` } },
+        [['sections','Sections'],['info','Project']].map(([key,label]) =>
+          React.createElement('button', {
+            key, onClick:()=>setSideTab(key),
+            style:{
+              flex:1, fontFamily:"'Figtree',sans-serif", fontSize:9, letterSpacing:'0.15em', textTransform:'uppercase',
+              fontWeight:500, background:'none', border:'none', cursor:'pointer', padding:'11px 0',
+              color: sideTab===key ? C.slate : C.goldDark,
+              borderBottom: sideTab===key ? `2px solid ${C.magnolia}` : '2px solid transparent',
+              marginBottom:-1,
+            }
+          }, label)
+        )
+      ),
+      sideTab === 'info'
+        ? React.createElement('div', { style:{flex:1,overflow:'auto'} },
+            React.createElement(ProjectInfo, { info, onChange: setInfo }),
+            React.createElement(AllowancesPanel, { allowances, onChange: setAllowances }),
+            React.createElement(AddOnsPanel, { addOns, onChange: setAddOns })
+          )
+        : React.createElement('div', { style:{flex:1,overflow:'auto',padding:16} },
+            // Stats
+            React.createElement('div', { style:{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:16 } },
+              ...[[totalIncluded,'Scope Lines',C.magnolia],[totalExclusions,'Exclusions',C.goldDark]].map(([n,label,color])=>
+                React.createElement('div', { key:label, style:{ background:C.bgLight, padding:'10px 12px', textAlign:'center' } },
+                  React.createElement('div', { style:{ fontFamily:"'Cormorant Garamond',serif", fontSize:28, fontWeight:500, color, lineHeight:1 } }, n),
+                  React.createElement('div', { style:{ fontFamily:"'Figtree',sans-serif", fontSize:8, letterSpacing:'0.1em', textTransform:'uppercase', color:C.goldDark, marginTop:4 } }, label)
+                )
+              )
+            ),
+            // Quick section list
+            React.createElement('div', { style:{ fontFamily:"'Figtree',sans-serif", fontSize:9, letterSpacing:'0.15em', textTransform:'uppercase', color:C.goldDark, marginBottom:8, fontWeight:500 } }, 'Sections'),
+            sections.map(s => {
+              const n = s.items.filter(i=>i.included).length;
+              return React.createElement('div', {
+                key:s.id,
+                style:{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'5px 0', cursor:'pointer', opacity: n > 0 ? 1 : 0.45 },
+                onClick: () => { setSideTab('sections_main'); document.getElementById('section_'+s.id)?.scrollIntoView({behavior:'smooth', block:'start'}); }
+              },
+                React.createElement('span', { style:{ fontFamily:"'Figtree',sans-serif", fontSize:11, color:C.slate } }, s.title),
+                n > 0 && React.createElement('span', { style:{ fontFamily:"'Figtree',sans-serif", fontSize:10, color:C.magnolia, fontWeight:500 } }, n)
+              );
+            })
+          )
+    ),
+
+    // Main area — scope library
+    React.createElement('div', { style:{ flex:1, overflow:'auto', display:'flex', flexDirection:'column' } },
+      // Search bar
+      React.createElement('div', { style:{ padding:'12px 16px', background:'white', borderBottom:`1px solid ${C.border}`, display:'flex', gap:8, flexShrink:0 } },
+        React.createElement('input', {
+          placeholder:'Search scope lines…',
+          value: searchQ,
+          onChange: e => setSearchQ(e.target.value),
+          style:{ flex:1, fontFamily:"'Figtree',sans-serif", fontSize:12, border:`1px solid ${C.border}`, padding:'7px 12px', color:C.slate, outline:'none', background:'white' }
+        }),
+        searchQ && React.createElement('button', {
+          onClick:()=>setSearchQ(''),
+          style:{ background:'none', border:`1px solid ${C.border}`, padding:'6px 10px', cursor:'pointer', color:C.goldDark, fontSize:12 }
+        }, '✕')
+      ),
+      // Section accordions
+      React.createElement('div', { style:{ padding:'8px 0', flex:1 } },
+        filteredSections.map((s, idx) =>
+          React.createElement('div', {
+            key:s.id, id:'section_'+s.id,
+            draggable: true,
+            onDragStart: () => onDragStart(s.id),
+            onDragEnter: () => onDragEnter(s.id),
+            onDragEnd: onDragEnd,
+            onDragOver: e => e.preventDefault(),
+            style: { outline: dragOver === s.id ? `2px solid ${C.magnolia}` : 'none', transition:'outline 0.1s' }
+          },
+            React.createElement(SectionAccordion, {
+              section: s,
+              onUpdateItems: updateSectionItems,
+              onToggleAll: toggleAll,
+              onMoveUp: () => moveSection(s.id, -1),
+              onMoveDown: () => moveSection(s.id, 1),
+              onDelete: () => deleteSection(s.id),
+              isFirst: idx === 0,
+              isLast: idx === filteredSections.length - 1,
+              dragHandleProps: {
+                draggable: true,
+                onDragStart: e => { e.stopPropagation(); onDragStart(s.id); },
+              }
+            })
+          )
+        ),
+        // Exclusions at bottom
+        React.createElement('div', { style:{marginTop:2} },
+          React.createElement(ExclusionsPanel, { exclusions, onUpdate:setExclusions })
+        ),
+        // Add new section
+        React.createElement('div', { style:{ padding:'12px 16px', borderTop:`1px solid ${C.border}`, marginTop:4 } },
+          React.createElement('div', { style:{ display:'flex', gap:8 } },
+            React.createElement('input', {
+              placeholder: 'New section name…',
+              value: addingSectionName,
+              onChange: e => setAddingSectionName(e.target.value),
+              onKeyDown: e => { if (e.key==='Enter' && addingSectionName.trim()) { addSection(addingSectionName.trim()); setAddingSectionName(''); } },
+              style: { flex:1, fontFamily:"'Figtree',sans-serif", fontSize:12, border:`1px solid ${C.border}`, padding:'7px 10px', color:C.slate, outline:'none', background:'white' }
+            }),
+            React.createElement('button', {
+              onClick: () => { if (addingSectionName.trim()) { addSection(addingSectionName.trim()); setAddingSectionName(''); } },
+              style: btnSmall(C.slate, 'white')
+            }, '+ Section')
+          )
+        )
+      )
+    )
+  );
+
+  // ── PREVIEW VIEW ──
+  const previewView = React.createElement('div', {
+    style:{ flex:1, overflow:'auto', background:'#ccc9c4', padding:'32px' }
+  },
+    React.createElement('div', { style:{ maxWidth:816, margin:'0 auto', background:'white', boxShadow:'0 4px 32px rgba(0,0,0,0.18)' } },
+      React.createElement(ScopeDocument, { info, sections, exclusions, allowances, addOns })
+    )
+  );
+
+  return React.createElement('div', { id:'builder-shell', style:{ height:'100vh', display:'flex', flexDirection:'column', overflow:'hidden' } },
+    topBar,
+    tab === 'build' ? buildView : previewView
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(React.createElement(App));
+</script>
+</body>
+</html>

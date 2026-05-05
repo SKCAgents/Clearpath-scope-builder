@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# editors
+.vscode/
+.idea/
+*.swp
+
+# local dev
+node_modules/
+.cache/
+
+# OS / misc
+Thumbs.db
+*.log
