@@ -338,20 +338,36 @@ function Root() {
   });
 
   React.useEffect(() => {
-    const { data: { subscription } } = cpOnAuthChange(async (event, s) => {
-      setSession(s);
-      if (!s) { setAuthState('signed_out'); return; }
-      setAuthState('checking');
-      const ok = await cpIsAllowed(s.user.email);
-      if (!ok) { setAuthState('not_allowed'); return; }
-      setAuthState('ready');
-      const local = localStorage.getItem('cp_scope_builder');
-      if (local) {
-        const count = await cpProjectCount();
-        if (count === 0) setShowMigration(true);
+    let cleanupFn = null;
+
+    function init() {
+      if (typeof window.cpOnAuthChange !== 'function') {
+        setTimeout(init, 100);
+        return;
       }
-    });
-    return () => subscription.unsubscribe();
+      const { data: { subscription } } = cpOnAuthChange(async (event, s) => {
+        setSession(s);
+        if (!s) { setAuthState('signed_out'); return; }
+        setAuthState('checking');
+        try {
+          const ok = await cpIsAllowed(s.user.email);
+          if (!ok) { setAuthState('not_allowed'); return; }
+          setAuthState('ready');
+          const local = localStorage.getItem('cp_scope_builder');
+          if (local) {
+            const count = await cpProjectCount();
+            if (count === 0) setShowMigration(true);
+          }
+        } catch (e) {
+          console.error('Auth check failed:', e);
+          setAuthState('signed_out');
+        }
+      });
+      cleanupFn = () => subscription.unsubscribe();
+    }
+
+    init();
+    return () => { if (cleanupFn) cleanupFn(); };
   }, []);
 
   function navigate(name, id) {
