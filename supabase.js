@@ -84,3 +84,15 @@ window.cpListLibrary = async function () {
   ]);
   return { sections: sections || [], exclusions: exclusions || [] };
 };
+
+window.cpAddToLibrary = async function (sectionId, sectionTitle, itemText) {
+  const { data: existing } = await _sb.from('library_sections').select('*').eq('id', sectionId).maybeSingle();
+  if (existing) {
+    if (existing.items.includes(itemText)) return { error: null, alreadyExists: true };
+    const { error } = await _sb.from('library_sections').update({ items: [...existing.items, itemText] }).eq('id', sectionId);
+    return { error };
+  } else {
+    const { error } = await _sb.from('library_sections').insert({ id: sectionId, title: sectionTitle, sort_order: 999, items: [itemText] });
+    return { error };
+  }
+};
