@@ -348,6 +348,8 @@ function Root() {
       const { data: { subscription } } = cpOnAuthChange(async (event, s) => {
         setSession(s);
         if (!s) { setAuthState('signed_out'); return; }
+        // Token refresh — session is still valid, no need to re-check allow-list
+        if (event === 'TOKEN_REFRESHED') return;
         setAuthState('checking');
         try {
           const ok = await cpIsAllowed(s.user.email);

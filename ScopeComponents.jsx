@@ -19,7 +19,7 @@ const ChevronDown = ({ open }) => React.createElement(Icon, {
   d: open ? 'M18 15l-6-6-6 6' : 'M6 9l6 6 6-6', size:14, color:C.goldDark });
 
 // ─── Single scope line item ──────────────────────────────────────────────────
-function LineItem({ text, included, onToggle, onEdit, onDelete, isCustom }) {
+function LineItem({ text, included, onToggle, onEdit, onDelete, isCustom, onAddToLibrary }) {
   const [editing, setEditing] = React.useState(false);
   const [val, setVal] = React.useState(text);
   const inputRef = React.useRef();
@@ -74,7 +74,12 @@ function LineItem({ text, included, onToggle, onEdit, onDelete, isCustom }) {
           onClick: () => { setEditing(true); setTimeout(() => inputRef.current?.focus(), 50); }
         }, text),
     // Actions
-    !editing && React.createElement('div', { style: { display:'flex', gap:4, flexShrink:0 } },
+    !editing && React.createElement('div', { style: { display:'flex', gap:4, flexShrink:0, alignItems:'center' } },
+      isCustom && onAddToLibrary && React.createElement('button', {
+        onClick: () => onAddToLibrary(text),
+        title: 'Add to master library',
+        style: { background:'none', border:`1px solid ${C.border}`, cursor:'pointer', padding:'1px 5px', color: C.goldDark, fontSize:9, letterSpacing:'0.08em', whiteSpace:'nowrap' }
+      }, '+ lib'),
       React.createElement('button', {
         onClick: () => setEditing(true),
         title: 'Edit',
@@ -94,7 +99,7 @@ function btnSmall(bg, color) {
 }
 
 // ─── Section Accordion ──────────────────────────────────────────────────────
-function SectionAccordion({ section, onUpdateItems, onToggleAll, onMoveUp, onMoveDown, onDelete, isFirst, isLast, dragHandleProps }) {
+function SectionAccordion({ section, onUpdateItems, onToggleAll, onMoveUp, onMoveDown, onDelete, isFirst, isLast, dragHandleProps, onAddToLibrary }) {
   const [open, setOpen] = React.useState(section.defaultOpen || false);
   const [newLine, setNewLine] = React.useState('');
   const includedCount = section.items.filter(i => i.included).length;
@@ -170,6 +175,7 @@ function SectionAccordion({ section, onUpdateItems, onToggleAll, onMoveUp, onMov
           onToggle: () => updateItem(idx, { included: !item.included }),
           onEdit: text => updateItem(idx, { text }),
           onDelete: () => deleteItem(idx),
+          onAddToLibrary: onAddToLibrary ? text => onAddToLibrary(section.id, section.title, text) : null,
         })
       ),
       React.createElement('div', { style: { display:'flex', gap:6, marginTop:10 } },

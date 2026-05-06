@@ -73,11 +73,13 @@
 
 // ── Initialise state from library ────────────────────────────────────────────
 function initSections(libraryData) {
-  const src = (libraryData?.sections?.length) ? libraryData.sections : SCOPE_LIBRARY;
-  return src.map(s => ({
+  // Merge hardcoded library with any DB additions
+  const dbExtras = {};
+  (libraryData?.sections || []).forEach(s => { dbExtras[s.id] = s.items || []; });
+  return SCOPE_LIBRARY.map(s => ({
     ...s,
     defaultOpen: false,
-    items: (s.items || []).map((text, i) => ({
+    items: [...(s.items || []), ...(dbExtras[s.id] || [])].map((text, i) => ({
       id: s.id + '_' + i,
       text: typeof text === 'string' ? text : String(text),
       included: false,
@@ -310,7 +312,7 @@ ${fontStyles}
 
     // Left sidebar — Project info + allowances
     React.createElement('div', {
-      style:{ width:260, flexShrink:0, background:'white', borderRight:`1px solid ${C.border}`, overflow:'auto', display:'flex', flexDirection:'column' }
+      style:{ width:290, flexShrink:0, background:'white', borderRight:`1px solid ${C.border}`, overflowX:'hidden', overflowY:'auto', display:'flex', flexDirection:'column' }
     },
       // Tabs
       React.createElement('div', { style:{ display:'flex', borderBottom:`1px solid ${C.border}` } },
@@ -398,7 +400,13 @@ ${fontStyles}
               dragHandleProps: {
                 draggable: true,
                 onDragStart: e => { e.stopPropagation(); onDragStart(s.id); },
-              }
+              },
+              onAddToLibrary: typeof cpAddToLibrary === 'function' ? async (sectionId, sectionTitle, text) => {
+                const { error, alreadyExists } = await cpAddToLibrary(sectionId, sectionTitle, text);
+                if (alreadyExists) alert('Already in library.');
+                else if (error) alert('Failed to add to library.');
+                else alert('"' + text.substring(0, 60) + (text.length > 60 ? '…' : '') + '" added to master library.');
+              } : null,
             })
           )
         ),
