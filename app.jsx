@@ -349,7 +349,7 @@ function Root() {
         setSession(s);
         if (!s) { setAuthState('signed_out'); return; }
         // Token refresh — session is still valid, no need to re-check allow-list
-        if (event === 'TOKEN_REFRESHED') return;
+        if (event !== 'INITIAL_SESSION' && event !== 'SIGNED_IN') return;
         setAuthState('checking');
         try {
           const ok = await cpIsAllowed(s.user.email);
