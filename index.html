@@ -70,24 +70,51 @@
 <script type="text/babel" src="ScopeDocument.jsx"></script>
 <script src="ScopeDocx.js"></script>
 <script type="text/babel">
+/**
+ * index.html — Core scope builder UI (App component) and document renderer
+ *
+ * This inline script contains the main App component that powers the scope
+ * builder interface — the two-panel layout with the section library on the
+ * left and the document preview on the right.
+ *
+ * It is rendered inside ProjectEditor (from app.jsx), which wraps it with
+ * database connectivity and auto-save. App itself is "dumb" — it just manages
+ * local UI state and calls onChange() whenever anything changes.
+ *
+ * Key responsibilities:
+ *   - Merging the hardcoded scope library with any database additions
+ *   - Managing the section list, exclusions, allowances, and project info
+ *   - Rendering the build view (editor) and preview view (document)
+ *   - Wiring up PDF export and .docx download
+ */
 
-// ── Initialise state from library ────────────────────────────────────────────
+
+// ── State initialization helpers ──────────────────────────────────────────────
+
+// Builds the initial sections array by merging the hardcoded SCOPE_LIBRARY
+// (from ScopeLibrary.jsx) with any custom lines the user has added to the
+// master library (fetched from the database and passed in via libraryData).
+// All items start unchecked — the user selects what applies to their project.
 function initSections(libraryData) {
-  // Merge hardcoded library with any DB additions
+  // Build a lookup of database-stored additions, keyed by section ID
   const dbExtras = {};
   (libraryData?.sections || []).forEach(s => { dbExtras[s.id] = s.items || []; });
+
   return SCOPE_LIBRARY.map(s => ({
     ...s,
     defaultOpen: false,
+    // Combine hardcoded items + any database additions, then normalize to objects
     items: [...(s.items || []), ...(dbExtras[s.id] || [])].map((text, i) => ({
-      id: s.id + '_' + i,
-      text: typeof text === 'string' ? text : String(text),
-      included: false,
-      custom: false,
+      id:       s.id + '_' + i,
+      text:     typeof text === 'string' ? text : String(text),
+      included: false,   // All lines start unchecked
+      custom:   false,   // Marks items added by the user at project-level (not library-level)
     }))
   }));
 }
 
+// Builds the initial exclusions array. If the database has custom exclusions,
+// use those; otherwise fall back to the hardcoded EXCLUSION_LIBRARY defaults.
 function initExclusions(libraryData) {
   const src = (libraryData?.exclusions?.length)
     ? libraryData.exclusions.map(e => e.text)
@@ -95,22 +122,39 @@ function initExclusions(libraryData) {
   return src.map((text, i) => ({ id: 'excl_' + i, text, included: false }));
 }
 
+
+// ── Default values ────────────────────────────────────────────────────────────
+
+// Default allowance line items that every new project starts with.
+// The user can edit these amounts, add new ones, or remove them.
 const DEFAULT_ALLOWANCES = [
-  { id: 'a1', label: 'Plumbing Fixtures', amount: '$20,000', desc: '' },
-  { id: 'a2', label: 'Decorative Lighting', amount: '$10,000', desc: '' },
-  { id: 'a3', label: 'Interior Trim', amount: '$32,000', desc: '' },
+  { id: 'a1', label: 'Plumbing Fixtures',                  amount: '$20,000',  desc: '' },
+  { id: 'a2', label: 'Decorative Lighting',                 amount: '$10,000',  desc: '' },
+  { id: 'a3', label: 'Interior Trim',                       amount: '$32,000',  desc: '' },
   { id: 'a4', label: 'Cabinetry, Countertops & Backsplash', amount: '$102,000', desc: '' },
-  { id: 'a5', label: 'Appliances', amount: '$30,000', desc: '' },
+  { id: 'a5', label: 'Appliances',                          amount: '$30,000',  desc: '' },
 ];
 
+// Default project info fields. preparedBy is pre-filled; everything else is blank.
 const DEFAULT_INFO = {
   projectName: '', clientName: '', address: '', date: '',
-  preparedBy: 'ClearPath Construction',
+  preparedBy:  'ClearPath Construction',
   estimate: '', estimateLow: '', estimateHigh: '',
   deposit: '$15,000', depositMemo: '',
 };
 
-// ── Main App (accepts props from ProjectEditor) ───────────────────────────────
+
+// ── App component ─────────────────────────────────────────────────────────────
+// The main scope builder UI. Accepts saved state from ProjectEditor (via
+// initialState) and notifies it of changes (via onChange) so they can be
+// auto-saved to the database.
+//
+// Props:
+//   initialState — previously saved project data (null for a brand new project)
+//   onChange     — called with the full current state whenever anything changes
+//   libraryData  — scope library data fetched from the database
+//   saveStatus   — 'saved' | 'saving' | 'pending' | 'error' (shown in the top bar)
+//   onBack       — called when the user clicks "← Projects" to return to the list
 function App({ initialState, onChange, libraryData, saveStatus, onBack }) {
   const [tab, setTab] = React.useState('build');
   const [info, setInfo] = React.useState(initialState?.info || DEFAULT_INFO);
