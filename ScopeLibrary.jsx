@@ -1,4 +1,30 @@
-// ─── Full Scope Line Library ───────────────────────────────────────────────
+/**
+ * ScopeLibrary.jsx — Master list of scope lines and standard exclusions
+ *
+ * This file is the single source of truth for all the pre-written scope line
+ * options that appear in the builder. When a user creates a new project, these
+ * are the lines they start from — they check the ones that apply and ignore the rest.
+ *
+ * Structure:
+ *   SCOPE_LIBRARY    — an array of sections (e.g. Framing, Plumbing, Roofing),
+ *                      each containing a list of scope line strings
+ *   EXCLUSION_LIBRARY — an array of standard "not included" disclaimer strings
+ *
+ * How customization works:
+ *   Users can add custom lines to a project. If they click "+ lib" on a custom
+ *   line, it gets saved to the database (library_sections table). When any project
+ *   is opened, those database entries are merged with this file's hardcoded list,
+ *   so promoted lines show up for everyone going forward.
+ *   See the initSections() function in index.html for how this merge happens.
+ *
+ * To edit the master defaults: just edit the arrays below and redeploy.
+ * No database changes needed for modifying the hardcoded library.
+ */
+
+
+// ── Scope sections ────────────────────────────────────────────────────────────
+// Each section has a unique 'id' (used as a database key), a 'title' (shown in
+// the UI), and an 'items' array of scope line strings.
 const SCOPE_LIBRARY = [
   {
     id: 'preconstruction', title: 'Preconstruction Planning',
@@ -105,8 +131,8 @@ const SCOPE_LIBRARY = [
   {
     id: 'windows_doors', title: 'Windows & Exterior Doors',
     items: [
-      'Sun Windows Patriot Clad windows in a standard color of the Client\'s choice.',
-      'Andersen 400 Series windows in Client\'s color choice.',
+      "Sun Windows Patriot Clad windows in a standard color of the Client's choice.",
+      "Andersen 400 Series windows in Client's color choice.",
       'Pella Impervia fiberglass windows.',
       'Marvin Elevate windows.',
       'All windows to be double-pane, low-e insulated glass.',
@@ -241,7 +267,7 @@ const SCOPE_LIBRARY = [
       'Includes shoe molding in all living area spaces where applicable.',
       'Paint-grade trim-built shelf and pole style shelving in closets as shown on plans.',
       'Mudroom includes trim-built paint grade built-ins where shown on plans.',
-      'The master bedroom includes a cedar box ridge beam stained to client\'s color choice.',
+      "The master bedroom includes a cedar box ridge beam stained to client's color choice.",
       'Wainscoting or board and batten in specified rooms.',
       'Built-in bookshelves or entertainment center per plans.',
       'Window seats with storage per plans.',
@@ -258,7 +284,7 @@ const SCOPE_LIBRARY = [
     id: 'cabinetry', title: 'Cabinetry & Countertops',
     items: [
       'All cabinets to be custom-built paint grade with a standard overlay.',
-      'All cabinets to be semi-custom painted wood in Client\'s color choice.',
+      "All cabinets to be semi-custom painted wood in Client's color choice.",
       'Custom-built stained hardwood cabinetry.',
       'Includes custom-built lower and upper cabinets where shown on plans.',
       'Level B quartz countertops included on all lower cabinetry only.',
@@ -406,6 +432,11 @@ const SCOPE_LIBRARY = [
   },
 ];
 
+
+// ── Standard exclusions ───────────────────────────────────────────────────────
+// These are items that are explicitly NOT included in the scope unless stated
+// otherwise. Including them in the document sets clear expectations and protects
+// against scope creep disputes. The user can check/uncheck these in the editor.
 const EXCLUSION_LIBRARY = [
   'Driveway work and temporary construction access (including stone drives, mats, protection, repair, or replacement) unless specifically included.',
   'Architectural drawings, structural engineering, or specialty consultant services unless specifically noted.',
@@ -429,5 +460,7 @@ const EXCLUSION_LIBRARY = [
   'Off-site improvements, street work, or utility main extensions.',
 ];
 
-// Export to window
+
+// ── Export ────────────────────────────────────────────────────────────────────
+// Make both libraries available to index.html via the window object.
 Object.assign(window, { SCOPE_LIBRARY, EXCLUSION_LIBRARY });
