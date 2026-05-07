@@ -308,7 +308,8 @@ ${fontStyles}
   );
 
   // ── BUILD VIEW ──
-  const buildView = React.createElement('div', { style:{ display:'flex', flex:1, overflow:'hidden' } },
+  const buildView = React.createElement('div', { style:{ flex:1, overflow:'hidden', background:C.bgLight, display:'flex' } },
+    React.createElement('div', { style:{ display:'flex', flex:1, overflow:'hidden', maxWidth:1106, margin:'0 auto', width:'100%' } },
 
     // Left sidebar — Project info + allowances
     React.createElement('div', {
@@ -432,7 +433,7 @@ ${fontStyles}
         )
       )
     )
-  );
+  ));
 
   // ── PREVIEW VIEW ──
   const previewView = React.createElement('div', {
