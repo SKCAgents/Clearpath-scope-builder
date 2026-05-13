@@ -192,9 +192,9 @@ function NewProjectModal({ onClose, onCreate }) {
 }
 
 // The main project dashboard. Shows all projects with search and sort.
-// Projects load from the database on mount. Search filters client-side
-// since the total number of projects is expected to be small.
-function ProjectList({ onOpen }) {
+// Projects load from the database once supabaseReady is true. Search filters
+// client-side since the total number of projects is expected to be small.
+function ProjectList({ onOpen, supabaseReady }) {
   // null = still loading; [] = loaded but empty; [...] = loaded with projects
   const [projects, setProjects] = React.useState(null);
   const [search, setSearch] = React.useState('');
@@ -205,7 +205,10 @@ function ProjectList({ onOpen }) {
   function load() {
     cpListProjects().then(({ data }) => setProjects(data));
   }
-  React.useEffect(load, []);
+
+  // Wait until supabase.js has loaded before making any DB calls.
+  // The project list shows its own "Loading…" state in the meantime.
+  React.useEffect(() => { if (supabaseReady) load(); }, [supabaseReady]);
 
   // Apply search filter and sort in one pass. No network calls — all client-side.
   const filtered = (projects || [])
@@ -303,7 +306,7 @@ function ProjectList({ onOpen }) {
 
 // Wraps the scope builder (the App component from index.html) with database
 // connectivity. Responsible for loading data and auto-saving changes.
-function ProjectEditor({ projectId, onBack }) {
+function ProjectEditor({ projectId, onBack, supabaseReady }) {
   // project = the full project record from the database (null while loading)
   const [project, setProject] = React.useState(null);
   // library = the master scope line library from the database (null while loading)
@@ -318,9 +321,10 @@ function ProjectEditor({ projectId, onBack }) {
   // before the debounce fires, we use this to do an immediate final save.
   const pendingRef = React.useRef(null);
 
-  // Load the project data and scope library in parallel when this component mounts.
+  // Load the project data and scope library in parallel once supabase.js is ready.
   // We wait for both before rendering the editor so neither can show stale data.
   React.useEffect(() => {
+    if (!supabaseReady) return;
     Promise.all([
       cpGetProject(projectId),
       cpListLibrary(),
@@ -328,21 +332,24 @@ function ProjectEditor({ projectId, onBack }) {
       setProject(proj);
       setLibrary(lib);
     });
-  }, [projectId]);
+  }, [projectId, supabaseReady]);
 
   // Register a "flush on exit" handler so unsaved changes aren't lost if the
   // user closes the tab or navigates away mid-debounce.
   React.useEffect(() => {
+    // Named function so we can remove the exact same reference on cleanup
     function flush() {
-      if (pendingRef.current) {
-        cpUpdateProject(projectId, pendingRef.current);
-      }
+      if (pendingRef.current) cpUpdateProject(projectId, pendingRef.current);
     }
-    // 'beforeunload' fires when the tab/window is about to close
+    function onVisibilityChange() { if (document.hidden) flush(); }
+
     window.addEventListener('beforeunload', flush);
-    // 'visibilitychange' fires when the tab is hidden (e.g. switching tabs on mobile)
-    document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
-    return () => window.removeEventListener('beforeunload', flush);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    // Remove both listeners when the component unmounts (fixes listener leak)
+    return () => {
+      window.removeEventListener('beforeunload', flush);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [projectId]);
 
   // Called by the App component every time the user changes anything.
@@ -450,13 +457,11 @@ function MigrationModal({ onDone, onOpen }) {
 // This is the component React renders first. It owns two concerns:
 //
 //   AUTH: Manages the authentication lifecycle. The flow is:
-//     1. Read the session from localStorage (no network — returns in milliseconds)
-//     2. If a session exists, show the app immediately. The session JWT is
-//        cryptographically signed by Supabase — we don't need a database call
-//        before trusting it and showing the UI.
-//     3. Run the allow-list check in the background. If the user isn't on the
-//        list, redirect them to the "not allowed" screen. This takes 1-2 seconds
-//        but the user doesn't see a loading screen while waiting.
+//     1. Read Supabase's localStorage key synchronously on mount — zero network,
+//        zero waiting. We know immediately whether the user is signed in.
+//     2. Show the app or sign-in screen right away based on that.
+//     3. Once supabase.js finishes loading, confirm the session is still valid
+//        and run the allow-list check in the background.
 //     4. Subscribe to auth events for future sign-ins and sign-outs.
 //
 //   ROUTING: The current view is stored in the URL (?view=projects or
@@ -464,16 +469,43 @@ function MigrationModal({ onDone, onOpen }) {
 //     URLs can be bookmarked or shared.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Reads Supabase's session from localStorage synchronously — no async, no network.
+// Supabase v2 always stores the session under this key after sign-in.
+// Returns 'ready' if a session token exists, 'signed_out' if not,
+// or 'loading' as a fallback if localStorage is unavailable (e.g. private browsing).
+function getInitialAuthState() {
+  try {
+    const raw = localStorage.getItem('sb-ircpwesvzhipusfzytfn-auth-token');
+    if (!raw) return 'signed_out';
+    const data = JSON.parse(raw);
+    // If a token exists, treat the user as signed in. Supabase will handle
+    // token refresh automatically — we don't need to validate the expiry here.
+    return data?.access_token ? 'ready' : 'signed_out';
+  } catch {
+    // localStorage blocked (e.g. some private browsing modes) — fall back to
+    // the loading state and let the async bootstrap resolve it normally.
+    return 'loading';
+  }
+}
+
 function Root() {
   // authState drives what the user sees:
-  //   'loading'    → brief initial state while we read localStorage
+  //   'loading'    → only if localStorage is unavailable (rare)
   //   'checking'   → only on fresh sign-in, while we verify the allow-list
-  //   'ready'      → authenticated and allowed — show the app
+  //   'ready'      → authenticated — show the app
   //   'signed_out' → no session — show the sign-in screen
   //   'not_allowed'→ valid Google account but email not on the approved list
-  const [authState, setAuthState] = React.useState('loading');
+  //
+  // getInitialAuthState() runs synchronously before the first render, so
+  // returning users see the app immediately with zero loading screen.
+  const [authState, setAuthState] = React.useState(getInitialAuthState);
   const [session, setSession]     = React.useState(null);
   const [showMigration, setShowMigration] = React.useState(false);
+
+  // supabaseReady becomes true once supabase.js has finished loading.
+  // ProjectList and ProjectEditor wait for this before making any DB calls.
+  // The user sees the app shell immediately; content loads once the client is ready.
+  const [supabaseReady, setSupabaseReady] = React.useState(false);
 
   // Read the current view from the URL on first render.
   // This allows the page to restore the correct view after a reload.
@@ -496,6 +528,9 @@ function Root() {
       while (typeof window.cpGetSession !== 'function') {
         await new Promise(resolve => setTimeout(resolve, 50));
       }
+
+      // Signal to child components that it's safe to make DB calls now.
+      setSupabaseReady(true);
 
       // Step 2: Read the session from the browser's localStorage.
       // Supabase stores the user's session (a JWT token) in localStorage after
@@ -602,10 +637,11 @@ function Root() {
           onOpen={(id) => { setShowMigration(false); navigate('editor', id); }}
         />
       )}
-      {/* Route to editor or project list based on URL */}
+      {/* Route to editor or project list based on URL.
+          supabaseReady is passed down so they know when it's safe to call the DB. */}
       {view.name === 'editor' && view.id
-        ? <ProjectEditor projectId={view.id} onBack={() => navigate('projects')} />
-        : <ProjectList onOpen={(id) => navigate('editor', id)} />
+        ? <ProjectEditor projectId={view.id} onBack={() => navigate('projects')} supabaseReady={supabaseReady} />
+        : <ProjectList onOpen={(id) => navigate('editor', id)} supabaseReady={supabaseReady} />
       }
     </>
   );
