@@ -192,23 +192,40 @@ function NewProjectModal({ onClose, onCreate }) {
 }
 
 // The main project dashboard. Shows all projects with search and sort.
-// Projects load from the database once supabaseReady is true. Search filters
-// client-side since the total number of projects is expected to be small.
-function ProjectList({ onOpen, supabaseReady }) {
+// Polls for supabase.js to finish loading before making the first DB call,
+// then fetches projects. Search filters client-side since totals are small.
+function ProjectList({ onOpen }) {
   // null = still loading; [] = loaded but empty; [...] = loaded with projects
   const [projects, setProjects] = React.useState(null);
   const [search, setSearch] = React.useState('');
   const [sort, setSort] = React.useState('updated_at');
   const [showNew, setShowNew] = React.useState(false);
 
-  // Fetch all projects from the database. Called on mount and after any deletion.
-  function load() {
-    cpListProjects().then(({ data }) => setProjects(data));
+  // Called after a deletion to refresh the list. By this point supabase.js
+  // is definitely loaded, so no retry logic needed.
+  function reload() {
+    cpListProjects()
+      .then(({ data }) => setProjects(data || []))
+      .catch(() => setProjects([]));
   }
 
-  // Wait until supabase.js has loaded before making any DB calls.
-  // The project list shows its own "Loading…" state in the meantime.
-  React.useEffect(() => { if (supabaseReady) load(); }, [supabaseReady]);
+  // On mount: poll until cpListProjects is available (supabase.js may still be
+  // loading), then fetch. The cancelled flag prevents stale state updates if
+  // the component unmounts while the request is in flight.
+  React.useEffect(() => {
+    let cancelled = false;
+    function tryLoad() {
+      if (typeof window.cpListProjects !== 'function') {
+        setTimeout(tryLoad, 100);
+        return;
+      }
+      cpListProjects()
+        .then(({ data }) => { if (!cancelled) setProjects(data || []); })
+        .catch(() => { if (!cancelled) setProjects([]); });
+    }
+    tryLoad();
+    return () => { cancelled = true; };
+  }, []);
 
   // Apply search filter and sort in one pass. No network calls — all client-side.
   const filtered = (projects || [])
@@ -281,7 +298,7 @@ function ProjectList({ onOpen, supabaseReady }) {
               ))}
             </div>
             {/* One row per project */}
-            {filtered.map(p => <ProjectRow key={p.id} project={p} onOpen={onOpen} onDeleted={load} />)}
+            {filtered.map(p => <ProjectRow key={p.id} project={p} onOpen={onOpen} onDeleted={reload} />)}
           </div>
         )}
       </div>
@@ -306,7 +323,7 @@ function ProjectList({ onOpen, supabaseReady }) {
 
 // Wraps the scope builder (the App component from index.html) with database
 // connectivity. Responsible for loading data and auto-saving changes.
-function ProjectEditor({ projectId, onBack, supabaseReady }) {
+function ProjectEditor({ projectId, onBack }) {
   // project = the full project record from the database (null while loading)
   const [project, setProject] = React.useState(null);
   // library = the master scope line library from the database (null while loading)
@@ -321,18 +338,31 @@ function ProjectEditor({ projectId, onBack, supabaseReady }) {
   // before the debounce fires, we use this to do an immediate final save.
   const pendingRef = React.useRef(null);
 
-  // Load the project data and scope library in parallel once supabase.js is ready.
-  // We wait for both before rendering the editor so neither can show stale data.
+  // On mount: poll until the DB helpers are available (supabase.js may still be
+  // loading), then fetch the project and library in parallel. The cancelled flag
+  // prevents stale state updates if the component unmounts mid-flight.
   React.useEffect(() => {
-    if (!supabaseReady) return;
-    Promise.all([
-      cpGetProject(projectId),
-      cpListLibrary(),
-    ]).then(([{ data: proj }, lib]) => {
-      setProject(proj);
-      setLibrary(lib);
-    });
-  }, [projectId, supabaseReady]);
+    let cancelled = false;
+    function tryLoad() {
+      if (typeof window.cpGetProject !== 'function') {
+        setTimeout(tryLoad, 100);
+        return;
+      }
+      Promise.all([
+        cpGetProject(projectId),
+        cpListLibrary(),
+      ]).then(([{ data: proj }, lib]) => {
+        if (!cancelled) {
+          setProject(proj);
+          setLibrary(lib);
+        }
+      }).catch(err => {
+        console.error('Failed to load project:', err);
+      });
+    }
+    tryLoad();
+    return () => { cancelled = true; };
+  }, [projectId]);
 
   // Register a "flush on exit" handler so unsaved changes aren't lost if the
   // user closes the tab or navigates away mid-debounce.
@@ -502,11 +532,6 @@ function Root() {
   const [session, setSession]     = React.useState(null);
   const [showMigration, setShowMigration] = React.useState(false);
 
-  // supabaseReady becomes true once supabase.js has finished loading.
-  // ProjectList and ProjectEditor wait for this before making any DB calls.
-  // The user sees the app shell immediately; content loads once the client is ready.
-  const [supabaseReady, setSupabaseReady] = React.useState(false);
-
   // Read the current view from the URL on first render.
   // This allows the page to restore the correct view after a reload.
   const [view, setView] = React.useState(() => {
@@ -532,9 +557,6 @@ function Root() {
       while (typeof window.cpGetSession !== 'function') {
         await new Promise(resolve => setTimeout(resolve, 50));
       }
-
-      // Signal to child components that it's safe to make DB calls now.
-      setSupabaseReady(true);
 
       // Step 2: Read the session from the browser's localStorage.
       // Supabase stores the user's session (a JWT token) in localStorage after
@@ -646,11 +668,10 @@ function Root() {
           onOpen={(id) => { setShowMigration(false); navigate('editor', id); }}
         />
       )}
-      {/* Route to editor or project list based on URL.
-          supabaseReady is passed down so they know when it's safe to call the DB. */}
+      {/* Route to editor or project list based on URL */}
       {view.name === 'editor' && view.id
-        ? <ProjectEditor projectId={view.id} onBack={() => navigate('projects')} supabaseReady={supabaseReady} />
-        : <ProjectList onOpen={(id) => navigate('editor', id)} supabaseReady={supabaseReady} />
+        ? <ProjectEditor projectId={view.id} onBack={() => navigate('projects')} />
+        : <ProjectList onOpen={(id) => navigate('editor', id)} />
       }
     </>
   );
