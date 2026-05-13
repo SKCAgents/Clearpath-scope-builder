@@ -518,8 +518,12 @@ function Root() {
   // Runs once when the app first loads. Reads the session, shows the app
   // immediately if authenticated, then does background verification.
   React.useEffect(() => {
-    // Track the Supabase subscription so we can clean it up on unmount
     let subscription = null;
+    // Once bootstrap verifies the session, this flag prevents the SIGNED_IN
+    // subscription event from triggering a redundant re-check. After an OAuth
+    // redirect, Supabase fires SIGNED_IN while processing the callback — but
+    // bootstrap already handled it, so we skip the subscription handler.
+    let bootstrapVerified = false;
 
     async function bootstrap() {
       // Step 1: Wait for supabase.js to finish loading.
@@ -548,6 +552,7 @@ function Root() {
         // making an additional database call.
         setSession(session);
         setAuthState('ready');
+        bootstrapVerified = true;
 
         // Step 3: Verify the allow-list in the background.
         // This is a secondary access control layer (only specific emails can use
@@ -583,9 +588,13 @@ function Root() {
           return;
         }
         if (event === 'SIGNED_IN') {
-          // Fresh sign-in — must verify allow-list before granting access.
-          // Unlike returning users (handled above), this is a real user action
-          // so showing a brief "checking" state is acceptable here.
+          // If bootstrap already verified this session (which happens on every
+          // OAuth redirect), skip the re-check — it would cause an unnecessary
+          // loading screen. The allow-list was already confirmed above.
+          if (bootstrapVerified) { setSession(s); return; }
+
+          // Only reaches here if a sign-in happens while the app is already
+          // mounted (rare — sign-in normally causes a full page reload).
           setSession(s);
           setAuthState('checking');
           try {
