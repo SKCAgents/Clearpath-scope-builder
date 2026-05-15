@@ -92,25 +92,59 @@
 // ── State initialization helpers ──────────────────────────────────────────────
 
 // Builds the initial sections array by merging the hardcoded SCOPE_LIBRARY
-// (from ScopeLibrary.jsx) with any custom lines the user has added to the
-// master library (fetched from the database and passed in via libraryData).
+// (from ScopeLibrary.jsx) with the user-editable library stored in the
+// database (libraryData.sections).
+//
+// Merge rule: if a section has a DB row, that row's items REPLACE the
+// hardcoded items for that section. Otherwise the hardcoded items are used.
+// This lets edits to hardcoded sections persist (via snapshot-on-first-edit
+// in cpUpdateLibraryItem / cpAddToLibrary).
+//
+// Each item carries a libraryText field — the text as it currently exists in
+// the library — so that when a user edits an item locally and later clicks
+// "Save to Library", we know which library entry to replace.
 // All items start unchecked — the user selects what applies to their project.
 function initSections(libraryData) {
-  // Build a lookup of database-stored additions, keyed by section ID
-  const dbExtras = {};
-  (libraryData?.sections || []).forEach(s => { dbExtras[s.id] = s.items || []; });
+  const dbSections = libraryData?.sections || [];
+  const dbById = {};
+  dbSections.forEach(s => { dbById[s.id] = s; });
 
-  return SCOPE_LIBRARY.map(s => ({
-    ...s,
-    defaultOpen: false,
-    // Combine hardcoded items + any database additions, then normalize to objects
-    items: [...(s.items || []), ...(dbExtras[s.id] || [])].map((text, i) => ({
-      id:       s.id + '_' + i,
-      text:     typeof text === 'string' ? text : String(text),
-      included: false,   // All lines start unchecked
-      custom:   false,   // Marks items added by the user at project-level (not library-level)
-    }))
-  }));
+  const toItem = (sectionId) => (text, i) => {
+    const str = typeof text === 'string' ? text : String(text);
+    return {
+      id:          sectionId + '_' + i,
+      text:        str,
+      libraryText: str,   // Original text in the library — used by "Save to Library" to identify which entry to replace
+      included:    false,
+      custom:      false, // Custom = added at the project level (not from the library)
+    };
+  };
+
+  // Hardcoded sections, with DB row (if present) replacing the items list
+  const merged = SCOPE_LIBRARY.map(s => {
+    const db = dbById[s.id];
+    const items = db ? db.items : (s.items || []);
+    return {
+      id: s.id,
+      title: db?.title || s.title,
+      defaultOpen: false,
+      items: items.map(toItem(s.id)),
+    };
+  });
+
+  // Plus user-created sections that live only in the DB (no hardcoded match)
+  const hardcodedIds = new Set(SCOPE_LIBRARY.map(s => s.id));
+  const dbOnly = dbSections
+    .filter(s => !hardcodedIds.has(s.id))
+    .sort((a, b) => (a.sort_order ?? 999) - (b.sort_order ?? 999))
+    .map(s => ({
+      id: s.id,
+      title: s.title,
+      defaultOpen: false,
+      items: (s.items || []).map(toItem(s.id)),
+    }));
+
+  return [...merged, ...dbOnly];
 }
 
 // Builds the initial exclusions array. If the database has custom exclusions,
@@ -120,6 +154,29 @@ function initExclusions(libraryData) {
     ? libraryData.exclusions.map(e => e.text)
     : EXCLUSION_LIBRARY;
   return src.map((text, i) => ({ id: 'excl_' + i, text, included: false }));
+}
+
+// Looks up the hardcoded items for a section by id. Used when pushing edits
+// to the library so the DB row can be seeded with the section's original
+// contents on first save (so other items in that section don't disappear).
+function getHardcodedItems(sectionId) {
+  const sec = (window.SCOPE_LIBRARY || []).find(s => s.id === sectionId);
+  return sec ? (sec.items || []) : [];
+}
+
+// Backfill libraryText on items loaded from older project saves that didn't
+// store it. Assumes any item without libraryText reflects its original
+// library text (i.e. unedited locally), which is true for the vast majority
+// of cases. Without this, "Save to Library" on an old-format item would
+// fall back to "append" semantics and duplicate the library entry.
+function backfillLibraryText(loadedSections) {
+  return (loadedSections || []).map(s => ({
+    ...s,
+    items: (s.items || []).map(item => ({
+      ...item,
+      libraryText: item.libraryText !== undefined ? item.libraryText : item.text,
+    })),
+  }));
 }
 
 
@@ -158,7 +215,9 @@ const DEFAULT_INFO = {
 function App({ initialState, onChange, libraryData, saveStatus, onBack }) {
   const [tab, setTab] = React.useState('build');
   const [info, setInfo] = React.useState(initialState?.info || DEFAULT_INFO);
-  const [sections, setSections] = React.useState(initialState?.sections || initSections(libraryData));
+  const [sections, setSections] = React.useState(
+    initialState?.sections ? backfillLibraryText(initialState.sections) : initSections(libraryData)
+  );
   const [exclusions, setExclusions] = React.useState(initialState?.exclusions || initExclusions(libraryData));
   const [allowances, setAllowances] = React.useState(initialState?.allowances || DEFAULT_ALLOWANCES);
   const [addOns, setAddOns] = React.useState(initialState?.addOns || []);
@@ -447,10 +506,44 @@ ${fontStyles}
                 onDragStart: e => { e.stopPropagation(); onDragStart(s.id); },
               },
               onAddToLibrary: typeof cpAddToLibrary === 'function' ? async (sectionId, sectionTitle, text) => {
-                const { error, alreadyExists } = await cpAddToLibrary(sectionId, sectionTitle, text);
+                const hardcodedItems = getHardcodedItems(sectionId);
+                const { error, alreadyExists } = await cpAddToLibrary(sectionId, sectionTitle, text, hardcodedItems);
                 if (alreadyExists) alert('Already in library.');
                 else if (error) alert('Failed to add to library.');
                 else alert('"' + text.substring(0, 60) + (text.length > 60 ? '…' : '') + '" added to master library.');
+              } : null,
+              onSaveToLibrary: typeof cpUpdateLibraryItem === 'function' ? async (sectionId, sectionTitle, libraryText, newText) => {
+                const hardcodedItems = getHardcodedItems(sectionId);
+                const { error, alreadyExists } = await cpUpdateLibraryItem(sectionId, sectionTitle, libraryText, newText, hardcodedItems);
+                if (error) { alert('Failed to save to library.'); return; }
+                if (alreadyExists) { alert('Already in library.'); return; }
+                // Sync local libraryText so further edits on this item replace
+                // (not duplicate) the library entry.
+                setSections(sects => sects.map(sec => {
+                  if (sec.id !== sectionId) return sec;
+                  return {
+                    ...sec,
+                    items: sec.items.map(it =>
+                      it.libraryText === libraryText ? { ...it, libraryText: newText } : it
+                    ),
+                  };
+                }));
+                const snippet = newText.length > 60 ? newText.substring(0, 60) + '…' : newText;
+                alert('"' + snippet + '" saved to master library.');
+              } : null,
+              onSaveSectionToLibrary: typeof cpSaveSectionToLibrary === 'function' ? async (sectionId, sectionTitle, items) => {
+                const { error } = await cpSaveSectionToLibrary(sectionId, sectionTitle, items);
+                if (error) { alert('Failed to save section to library.'); return; }
+                // Mark each item's libraryText so subsequent per-line edits
+                // replace (not duplicate) the library entry.
+                setSections(sects => sects.map(sec => {
+                  if (sec.id !== sectionId) return sec;
+                  return {
+                    ...sec,
+                    items: sec.items.map(it => ({ ...it, libraryText: it.text })),
+                  };
+                }));
+                alert('Section "' + sectionTitle + '" saved to master library.');
               } : null,
             })
           )

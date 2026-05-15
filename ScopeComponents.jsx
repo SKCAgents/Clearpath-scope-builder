@@ -74,17 +74,24 @@ function btnSmall(bg, color) {
 //   - Deleting the line
 //   - "Add to library" button for custom lines (promotes a one-off line to the
 //     master library so it shows up in all future projects)
+//   - "Save to Library" button in edit mode — saves the edit locally AND
+//     updates the master library version of this line for all future projects
 //
 // Props:
-//   text           — the scope line text
-//   included       — whether this line is currently checked/included
-//   isCustom       — true if the user added this line themselves (vs. from the library)
-//   onToggle       — called when the checkbox is clicked
-//   onEdit(text)   — called with the new text when the user finishes editing
-//   onDelete       — called when the user clicks the remove button
-//   onAddToLibrary — called with the text when the user clicks "+ lib"
-//                    (null if the feature is unavailable for this item)
-function LineItem({ text, included, onToggle, onEdit, onDelete, isCustom, onAddToLibrary }) {
+//   text            — the scope line text (the current local value)
+//   libraryText     — the original text as it exists in the library (null for
+//                     items that aren't from the library yet, e.g. user custom)
+//   included        — whether this line is currently checked/included
+//   isCustom        — true if the user added this line themselves (vs. from the library)
+//   onToggle        — called when the checkbox is clicked
+//   onEdit(text)    — called with the new text when the user finishes editing
+//   onDelete        — called when the user clicks the remove button
+//   onAddToLibrary  — called with the text when the user clicks "+ lib"
+//                     (null if the feature is unavailable for this item)
+//   onSaveToLibrary — called with the new text when the user clicks "Save to
+//                     Library" in edit mode. Updates project AND library.
+//                     Null if not allowed (e.g. exclusions).
+function LineItem({ text, libraryText, included, onToggle, onEdit, onDelete, isCustom, onAddToLibrary, onSaveToLibrary }) {
   const [editing, setEditing] = React.useState(false);  // Whether the edit textarea is showing
   const [val, setVal]         = React.useState(text);    // Live value while the user is typing
   const inputRef = React.useRef();
@@ -93,6 +100,15 @@ function LineItem({ text, included, onToggle, onEdit, onDelete, isCustom, onAddT
   function saveEdit() {
     onEdit(val.trim() || text);
     setEditing(false);
+  }
+
+  // Save the edit locally AND push it to the master library, where it replaces
+  // the library's version of this line (or is added if not yet in the library).
+  function saveEditAndLibrary() {
+    const next = val.trim() || text;
+    onEdit(next);
+    setEditing(false);
+    if (onSaveToLibrary) onSaveToLibrary(next);
   }
 
   const liStyles = {
@@ -148,6 +164,11 @@ function LineItem({ text, included, onToggle, onEdit, onDelete, isCustom, onAddT
           }),
           React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
             React.createElement('button', { onClick: saveEdit, style: btnSmall(C.magnolia, 'white') }, 'Save'),
+            onSaveToLibrary && React.createElement('button', {
+              onClick: saveEditAndLibrary,
+              title: 'Save edit and update the master library so this line shows up edited in all future projects',
+              style: { ...btnSmall(C.slate, 'white'), whiteSpace: 'nowrap' }
+            }, '+ Library'),
             React.createElement('button', { onClick: () => { setEditing(false); setVal(text); }, style: btnSmall('#ccc', C.slate) }, 'Cancel')
           )
         )
@@ -204,8 +225,12 @@ function LineItem({ text, included, onToggle, onEdit, onDelete, isCustom, onAddT
 //   onDelete         — called to remove this section entirely
 //   isFirst/isLast   — disables the up/down arrows at the list boundaries
 //   dragHandleProps  — event handlers passed to the drag handle element
-//   onAddToLibrary   — passed through to each LineItem for the "+ lib" feature
-function SectionAccordion({ section, onUpdateItems, onToggleAll, onMoveUp, onMoveDown, onDelete, isFirst, isLast, dragHandleProps, onAddToLibrary }) {
+//   onAddToLibrary         — passed through to each LineItem for the "+ lib" feature
+//   onSaveToLibrary        — passed through to each LineItem for "Save to Library" edits
+//   onSaveSectionToLibrary — called with (sectionId, sectionTitle, items[]) when
+//                            the user clicks "Save Section to Library". Only
+//                            shown on custom sections (id starting with 'custom_').
+function SectionAccordion({ section, onUpdateItems, onToggleAll, onMoveUp, onMoveDown, onDelete, isFirst, isLast, dragHandleProps, onAddToLibrary, onSaveToLibrary, onSaveSectionToLibrary }) {
   const [open, setOpen]       = React.useState(section.defaultOpen || false);
   const [newLine, setNewLine] = React.useState('');  // The text in the "add custom line" input
 
@@ -305,16 +330,20 @@ function SectionAccordion({ section, onUpdateItems, onToggleAll, onMoveUp, onMov
       // Render one LineItem per scope line in this section
       section.items.map((item, idx) =>
         React.createElement(LineItem, {
-          key:     item.id,
-          text:    item.text,
-          included: item.included,
-          isCustom: item.custom,
+          key:        item.id,
+          text:       item.text,
+          libraryText: item.libraryText,
+          included:   item.included,
+          isCustom:   item.custom,
           onToggle: () => updateItem(idx, { included: !item.included }),
           onEdit:   text => updateItem(idx, { text }),
           onDelete: () => deleteItem(idx),
           // Pass the section ID and title along so the library save has the right context
           onAddToLibrary: onAddToLibrary
             ? text => onAddToLibrary(section.id, section.title, text)
+            : null,
+          onSaveToLibrary: onSaveToLibrary
+            ? newText => onSaveToLibrary(section.id, section.title, item.libraryText, newText)
             : null,
         })
       ),
@@ -328,7 +357,25 @@ function SectionAccordion({ section, onUpdateItems, onToggleAll, onMoveUp, onMov
           style: { flex: 1, fontFamily: "'Figtree', sans-serif", fontSize: 12, padding: '6px 10px', border: `1px solid ${C.border}`, background: 'white', color: C.slate, outline: 'none' },
         }),
         React.createElement('button', { onClick: addItem, style: btnSmall(C.slate, 'white') }, '+ Add')
-      )
+      ),
+
+      // "Save Section to Library" — pushes a user-created custom section
+      // (title + all items) into the master library so it shows up in all
+      // future projects. Only shown on sections the user added in this
+      // project (id starts with 'custom_') and only when there's at least
+      // one line to save.
+      section.id.startsWith('custom_') && onSaveSectionToLibrary && section.items.length > 0 &&
+        React.createElement('div', { style: { marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${C.border}` } },
+          React.createElement('button', {
+            onClick: () => {
+              const lines = section.items.length;
+              if (!window.confirm(`Save section "${section.title}" with ${lines} line${lines === 1 ? '' : 's'} to the master library? It will appear in all future projects.`)) return;
+              onSaveSectionToLibrary(section.id, section.title, section.items.map(i => i.text));
+            },
+            title: 'Add this section to the master library',
+            style: { ...btnSmall(C.magnolia, 'white'), width: '100%', padding: '6px 8px', letterSpacing: '0.05em' }
+          }, '↑ Save Section to Library')
+        )
     )
   );
 }

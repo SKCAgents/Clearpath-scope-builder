@@ -169,9 +169,11 @@ window.cpListLibrary = async function () {
 
 // Adds a custom scope line to the master library so it appears in all future
 // projects by default. If the section already exists in the library, the line
-// is appended to it. If the section doesn't exist yet, a new one is created.
+// is appended to it. If the section doesn't exist yet, a new one is created
+// and seeded with the hardcoded items so the section keeps its full contents
+// under the "DB row replaces hardcoded" merge rule.
 // Returns { alreadyExists: true } if the exact text is already in the library.
-window.cpAddToLibrary = async function (sectionId, sectionTitle, itemText) {
+window.cpAddToLibrary = async function (sectionId, sectionTitle, itemText, hardcodedItems) {
   // Check if this section already has a library entry
   const { data: existing } = await _sb
     .from('library_sections')
@@ -190,11 +192,96 @@ window.cpAddToLibrary = async function (sectionId, sectionTitle, itemText) {
       .eq('id', sectionId);
     return { error };
   } else {
-    // Section doesn't exist in the library yet — create it
+    // Section doesn't exist in the library yet — create it, snapshotting any
+    // hardcoded items so the section retains its full contents.
     // sort_order: 999 places it at the end of the library list
+    const seed = Array.isArray(hardcodedItems) ? [...hardcodedItems] : [];
+    if (!seed.includes(itemText)) seed.push(itemText);
     const { error } = await _sb
       .from('library_sections')
-      .insert({ id: sectionId, title: sectionTitle, sort_order: 999, items: [itemText] });
+      .insert({ id: sectionId, title: sectionTitle, sort_order: 999, items: seed });
+    return { error };
+  }
+};
+
+// Replaces the text of one library item. If no DB row exists for this section
+// yet, the hardcoded items are snapshotted into a new DB row with the edit
+// applied — from that point on, the DB row is the canonical version of the
+// section for everyone.
+//
+// libraryText: the item's original library text (the row being replaced).
+//              Pass null/undefined for custom items not yet in the library.
+// newText:     the edited text to save.
+// hardcodedItems: the hardcoded ScopeLibrary items for this section
+//                 (used to snapshot when no DB row exists yet).
+//
+// Returns { error, alreadyExists } — alreadyExists means newText was already
+// in the library.
+window.cpUpdateLibraryItem = async function (sectionId, sectionTitle, libraryText, newText, hardcodedItems) {
+  const { data: existing } = await _sb
+    .from('library_sections')
+    .select('*')
+    .eq('id', sectionId)
+    .maybeSingle();
+
+  if (existing) {
+    // DB row exists — replace the matching item, or append if the original
+    // isn't there (e.g. for custom items being promoted to the library).
+    if (libraryText && existing.items.includes(libraryText)) {
+      if (existing.items.includes(newText) && newText !== libraryText) {
+        return { error: null, alreadyExists: true };
+      }
+      const updated = existing.items.map(t => t === libraryText ? newText : t);
+      const { error } = await _sb
+        .from('library_sections')
+        .update({ items: updated })
+        .eq('id', sectionId);
+      return { error };
+    } else {
+      if (existing.items.includes(newText)) return { error: null, alreadyExists: true };
+      const { error } = await _sb
+        .from('library_sections')
+        .update({ items: [...existing.items, newText] })
+        .eq('id', sectionId);
+      return { error };
+    }
+  } else {
+    // No DB row — snapshot hardcoded items, apply the edit, insert.
+    const base = Array.isArray(hardcodedItems) ? [...hardcodedItems] : [];
+    let items;
+    if (libraryText && base.includes(libraryText)) {
+      items = base.map(t => t === libraryText ? newText : t);
+    } else {
+      items = base.includes(newText) ? base : [...base, newText];
+    }
+    const { error } = await _sb
+      .from('library_sections')
+      .insert({ id: sectionId, title: sectionTitle, sort_order: 999, items });
+    return { error };
+  }
+};
+
+// Saves a whole user-created section (title + items) to the library so it
+// appears as a complete section in all future projects. Upserts: creates the
+// row if it doesn't exist, otherwise replaces title and items.
+window.cpSaveSectionToLibrary = async function (sectionId, sectionTitle, items) {
+  const cleanItems = (items || []).map(t => typeof t === 'string' ? t : String(t)).filter(Boolean);
+  const { data: existing } = await _sb
+    .from('library_sections')
+    .select('id')
+    .eq('id', sectionId)
+    .maybeSingle();
+
+  if (existing) {
+    const { error } = await _sb
+      .from('library_sections')
+      .update({ title: sectionTitle, items: cleanItems })
+      .eq('id', sectionId);
+    return { error };
+  } else {
+    const { error } = await _sb
+      .from('library_sections')
+      .insert({ id: sectionId, title: sectionTitle, sort_order: 999, items: cleanItems });
     return { error };
   }
 };
