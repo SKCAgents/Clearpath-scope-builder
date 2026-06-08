@@ -16,6 +16,14 @@
  */
 
 
+// Only these emails are allowed to delete projects. Compared case-insensitively.
+// To grant another user delete access, add their email to this list.
+const ADMIN_EMAILS = ['david@stewartknowles.com'];
+function isAdmin(email) {
+  return !!email && ADMIN_EMAILS.includes(email.toLowerCase());
+}
+
+
 // ─────────────────────────────────────────────────────────────────────────────
 // FULL-SCREEN STATE SCREENS
 // These are simple screens shown during auth transitions.
@@ -79,7 +87,7 @@ function NotAllowed({ email }) {
 // A single row in the project list table.
 // Clicking the row opens the project. Deleting requires two clicks to confirm,
 // preventing accidental deletions.
-function ProjectRow({ project: p, onOpen, onDeleted }) {
+function ProjectRow({ project: p, onOpen, onDeleted, canDelete }) {
   // 'confirming' tracks whether the user has clicked Delete once already.
   // The second click triggers the actual deletion.
   const [confirming, setConfirming] = React.useState(false);
@@ -103,7 +111,7 @@ function ProjectRow({ project: p, onOpen, onDeleted }) {
   return (
     <div
       onClick={() => onOpen(p.id)}
-      style={{ display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr 120px 80px', background: 'white', padding: '13px 20px', cursor: 'pointer', alignItems: 'center', borderBottom: `1px solid ${C.border}` }}
+      style={{ display: 'grid', gridTemplateColumns: canDelete ? '2fr 1.5fr 2fr 120px 80px' : '2fr 1.5fr 2fr 120px', background: 'white', padding: '13px 20px', cursor: 'pointer', alignItems: 'center', borderBottom: `1px solid ${C.border}` }}
       onMouseEnter={e => e.currentTarget.style.background = C.bgLight}
       onMouseLeave={e => e.currentTarget.style.background = 'white'}
     >
@@ -111,16 +119,19 @@ function ProjectRow({ project: p, onOpen, onDeleted }) {
       <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 12, color: C.goldDark }}>{p.client_name || '—'}</div>
       <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 12, color: C.goldDark }}>{p.address || '—'}</div>
       <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, color: C.gold, textTransform: 'capitalize' }}>{updatedLabel}</div>
+      {/* Delete button is only rendered for admin users (see ADMIN_EMAILS). */}
       {/* Stop click propagation here so clicking the delete button doesn't open the project */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
-        <button
-          onClick={handleDelete}
-          onBlur={() => setConfirming(false)} // Cancel confirmation if focus leaves the button
-          style={{ fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', background: confirming ? C.magnolia : 'none', color: confirming ? C.offwhite : C.gold, border: `1px solid ${confirming ? C.magnolia : C.border}`, padding: '4px 8px', cursor: 'pointer' }}
-        >
-          {confirming ? 'Confirm' : 'Delete'}
-        </button>
-      </div>
+      {canDelete && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
+          <button
+            onClick={handleDelete}
+            onBlur={() => setConfirming(false)} // Cancel confirmation if focus leaves the button
+            style={{ fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', background: confirming ? C.magnolia : 'none', color: confirming ? C.offwhite : C.gold, border: `1px solid ${confirming ? C.magnolia : C.border}`, padding: '4px 8px', cursor: 'pointer' }}
+          >
+            {confirming ? 'Confirm' : 'Delete'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -194,7 +205,8 @@ function NewProjectModal({ onClose, onCreate }) {
 // The main project dashboard. Shows all projects with search and sort.
 // Polls for supabase.js to finish loading before making the first DB call,
 // then fetches projects. Search filters client-side since totals are small.
-function ProjectList({ onOpen }) {
+function ProjectList({ onOpen, currentEmail }) {
+  const canDelete = isAdmin(currentEmail);
   // null = still loading; [] = loaded but empty; [...] = loaded with projects
   const [projects, setProjects] = React.useState(null);
   const [search, setSearch] = React.useState('');
@@ -292,13 +304,13 @@ function ProjectList({ onOpen }) {
         ) : (
           <div>
             {/* Column header row */}
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr 120px 80px', padding: '8px 20px', borderBottom: `1px solid ${C.border}`, background: C.bgLight }}>
-              {['Project Name', 'Client', 'Address', 'Updated', ''].map(h => (
+            <div style={{ display: 'grid', gridTemplateColumns: canDelete ? '2fr 1.5fr 2fr 120px 80px' : '2fr 1.5fr 2fr 120px', padding: '8px 20px', borderBottom: `1px solid ${C.border}`, background: C.bgLight }}>
+              {(canDelete ? ['Project Name', 'Client', 'Address', 'Updated', ''] : ['Project Name', 'Client', 'Address', 'Updated']).map(h => (
                 <div key={h} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.15em', textTransform: 'uppercase', color: C.goldDark, fontWeight: 500 }}>{h}</div>
               ))}
             </div>
             {/* One row per project */}
-            {filtered.map(p => <ProjectRow key={p.id} project={p} onOpen={onOpen} onDeleted={reload} />)}
+            {filtered.map(p => <ProjectRow key={p.id} project={p} onOpen={onOpen} onDeleted={reload} canDelete={canDelete} />)}
           </div>
         )}
       </div>
@@ -671,7 +683,7 @@ function Root() {
       {/* Route to editor or project list based on URL */}
       {view.name === 'editor' && view.id
         ? <ProjectEditor projectId={view.id} onBack={() => navigate('projects')} />
-        : <ProjectList onOpen={(id) => navigate('editor', id)} />
+        : <ProjectList onOpen={(id) => navigate('editor', id)} currentEmail={session?.user?.email} />
       }
     </>
   );
