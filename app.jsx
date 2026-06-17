@@ -205,8 +205,9 @@ function NewProjectModal({ onClose, onCreate }) {
 // The main project dashboard. Shows all projects with search and sort.
 // Polls for supabase.js to finish loading before making the first DB call,
 // then fetches projects. Search filters client-side since totals are small.
-function ProjectList({ onOpen, currentEmail }) {
+function ProjectList({ onOpen, onOpenLibrary, currentEmail }) {
   const canDelete = isAdmin(currentEmail);
+  const canEditTemplate = isAdmin(currentEmail);
   // null = still loading; [] = loaded but empty; [...] = loaded with projects
   const [projects, setProjects] = React.useState(null);
   const [search, setSearch] = React.useState('');
@@ -256,6 +257,12 @@ function ProjectList({ onOpen, currentEmail }) {
         <img src={(document.getElementById('__logo_icon') || {}).src || 'assets/ClearPath-Icon-Limestone.png'} alt="ClearPath" style={{ height: 32 }} />
         <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 8, letterSpacing: '0.28em', textTransform: 'uppercase', color: C.gold }}>Scope Builder</div>
         <div style={{ flex: 1 }} />
+        {/* Master Template editor — admins only (edits the shared scope library) */}
+        {canEditTemplate && (
+          <button onClick={onOpenLibrary} title="Edit the master scope library that new projects start from" style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', fontWeight: 400, background: 'none', color: C.gold, border: '1px solid rgba(195,189,177,0.5)', padding: '6px 14px', cursor: 'pointer' }}>
+            Master Template
+          </button>
+        )}
         <button onClick={() => setShowNew(true)} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', fontWeight: 500, background: C.offwhite, color: C.slate, border: 'none', padding: '7px 16px', cursor: 'pointer' }}>
           + New Project
         </button>
@@ -435,6 +442,320 @@ function ProjectEditor({ projectId, onBack }) {
     saveStatus,
     onBack,
   });
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MASTER TEMPLATE EDITOR (admin only)
+// A dedicated screen for editing the shared scope library directly — the
+// baseline that every NEW project starts from. Edits here do not touch any
+// existing project (projects keep their own saved copy of the scope).
+//
+// What it edits:
+//   - Scope sections and their lines (add / edit / delete / reorder lines,
+//     rename sections, add custom sections, delete/reset sections)
+//   - Standard exclusions (add / edit / delete / reorder)
+//
+// Persistence maps onto the existing library model:
+//   - Saving a section upserts a library_sections row (cpSaveSectionToLibrary).
+//     For built-in sections this overrides the hardcoded defaults; for custom
+//     sections it creates/updates the row.
+//   - Deleting a built-in section removes its override (reverting to hardcoded);
+//     deleting a custom section removes it entirely (cpDeleteLibrarySection).
+//   - Saving exclusions replaces the whole list (cpReplaceExclusions).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Builds the editable template view by merging the hardcoded SCOPE_LIBRARY /
+// EXCLUSION_LIBRARY (from ScopeLibrary.jsx, on window) with the database
+// library. Mirrors the merge rule in index.html's initSections, but without the
+// per-project "included" flag — here we only care about content and order.
+function buildTemplateView(libraryData) {
+  const dbSections = libraryData?.sections || [];
+  const dbById = {};
+  dbSections.forEach(s => { dbById[s.id] = s; });
+
+  const builtInIds = new Set((window.SCOPE_LIBRARY || []).map(s => s.id));
+
+  // Built-in sections first (DB row overrides items/title when present)
+  const builtIn = (window.SCOPE_LIBRARY || []).map(s => {
+    const db = dbById[s.id];
+    return {
+      id: s.id,
+      title: db?.title || s.title,
+      items: [...((db ? db.items : s.items) || [])],
+      isBuiltIn: true,
+      hasOverride: !!db,   // true if a DB row currently overrides the hardcoded default
+    };
+  });
+
+  // Then custom (DB-only) sections, in their saved sort order
+  const custom = dbSections
+    .filter(s => !builtInIds.has(s.id))
+    .sort((a, b) => (a.sort_order ?? 999) - (b.sort_order ?? 999))
+    .map(s => ({ id: s.id, title: s.title, items: [...(s.items || [])], isBuiltIn: false, hasOverride: true }));
+
+  const sections = [...builtIn, ...custom];
+
+  // Exclusions: DB list if any, else hardcoded defaults
+  const exclusions = (libraryData?.exclusions?.length)
+    ? libraryData.exclusions.map(e => e.text)
+    : [...(window.EXCLUSION_LIBRARY || [])];
+
+  return { sections, exclusions };
+}
+
+// One editable section card. Holds its own draft state so typing doesn't
+// re-render the whole list; "Save" pushes the draft to the library.
+function TemplateSectionCard({ section, onSaved, onDeleted }) {
+  const [title, setTitle] = React.useState(section.title);
+  const [items, setItems] = React.useState(section.items);
+  const [newLine, setNewLine] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+  const [saved, setSaved] = React.useState(false);   // brief "Saved ✓" confirmation
+  const [open, setOpen] = React.useState(false);
+
+  // Any local change clears the "saved" confirmation so the button reflects
+  // that there are unsaved edits again.
+  function touched() { setSaved(false); }
+
+  function editLine(i, text) { setItems(arr => arr.map((t, j) => j === i ? text : t)); touched(); }
+  function deleteLine(i)     { setItems(arr => arr.filter((_, j) => j !== i)); touched(); }
+  function moveLine(i, dir) {
+    const j = i + dir;
+    if (j < 0 || j >= items.length) return;
+    setItems(arr => { const next = [...arr]; [next[i], next[j]] = [next[j], next[i]]; return next; });
+    touched();
+  }
+  function addLine() {
+    if (!newLine.trim()) return;
+    setItems(arr => [...arr, newLine.trim()]);
+    setNewLine('');
+    touched();
+  }
+
+  async function save() {
+    setSaving(true);
+    const clean = items.map(t => t.trim()).filter(Boolean);
+    const { error } = await cpSaveSectionToLibrary(section.id, title.trim() || section.title, clean);
+    setSaving(false);
+    if (error) { alert('Failed to save section: ' + error.message); return; }
+    setSaved(true);
+    if (onSaved) onSaved(section.id, { title: title.trim() || section.title, items: clean });
+  }
+
+  async function remove() {
+    const msg = section.isBuiltIn
+      ? `Reset built-in section "${section.title}" to its default lines? Any customizations to this section will be removed.`
+      : `Delete custom section "${section.title}" from the master library? It will no longer appear in new projects.`;
+    if (!window.confirm(msg)) return;
+    const { error } = await cpDeleteLibrarySection(section.id);
+    if (error) { alert('Failed to delete section: ' + error.message); return; }
+    if (onDeleted) onDeleted(section.id);
+  }
+
+  const lineInput = { flex: 1, fontFamily: "'Figtree', sans-serif", fontSize: 12, lineHeight: 1.5, border: `1px solid ${C.border}`, padding: '5px 8px', color: C.slate, outline: 'none', background: 'white', resize: 'vertical' };
+  const arrowBtn = (disabled) => ({ background: 'none', border: 'none', cursor: disabled ? 'default' : 'pointer', color: disabled ? C.border : C.goldDark, fontSize: 13, padding: '0 2px' });
+
+  return (
+    <div style={{ background: 'white', border: `1px solid ${C.border}`, borderLeft: `3px solid ${section.isBuiltIn ? C.gold : C.magnolia}`, marginBottom: 8 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', cursor: 'pointer', background: open ? C.bgLight : 'white' }} onClick={() => setOpen(o => !o)}>
+        <span style={{ color: C.goldDark, fontSize: 12, width: 12 }}>{open ? '▾' : '▸'}</span>
+        <span style={{ flex: 1, fontFamily: "'Figtree', sans-serif", fontWeight: 500, fontSize: 12, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.slate }}>{title || '(untitled)'}</span>
+        <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, color: C.goldDark }}>{items.length} line{items.length === 1 ? '' : 's'}</span>
+        {section.isBuiltIn
+          ? <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 8, letterSpacing: '0.12em', textTransform: 'uppercase', color: section.hasOverride ? C.magnolia : C.gold }}>{section.hasOverride ? 'Customized' : 'Built-in'}</span>
+          : <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 8, letterSpacing: '0.12em', textTransform: 'uppercase', color: C.magnolia }}>Custom</span>}
+        {!saved && <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 8, letterSpacing: '0.12em', textTransform: 'uppercase', color: C.goldDark, fontStyle: 'italic' }}>unsaved</span>}
+      </div>
+
+      {/* Body */}
+      {open && (
+        <div style={{ padding: '8px 12px 12px', borderTop: `1px solid ${C.border}` }} onClick={e => e.stopPropagation()}>
+          {/* Title */}
+          <label style={{ display: 'block', fontFamily: "'Figtree', sans-serif", fontSize: 8, letterSpacing: '0.15em', textTransform: 'uppercase', color: C.goldDark, marginBottom: 4 }}>Section Title</label>
+          <input value={title} onChange={e => { setTitle(e.target.value); touched(); }} style={{ width: '100%', fontFamily: "'Figtree', sans-serif", fontSize: 12, border: `1px solid ${C.border}`, padding: '6px 8px', color: C.slate, outline: 'none', marginBottom: 12 }} />
+
+          {/* Lines */}
+          {items.map((text, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 4, marginBottom: 6 }}>
+              <textarea value={text} rows={1} onChange={e => editLine(i, e.target.value)} style={lineInput} />
+              <button onClick={() => moveLine(i, -1)} disabled={i === 0} title="Move up" style={arrowBtn(i === 0)}>↑</button>
+              <button onClick={() => moveLine(i, 1)} disabled={i === items.length - 1} title="Move down" style={arrowBtn(i === items.length - 1)}>↓</button>
+              <button onClick={() => deleteLine(i)} title="Remove line" style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.goldDark, fontSize: 12, padding: '2px 4px' }}>✕</button>
+            </div>
+          ))}
+
+          {/* Add line */}
+          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+            <input placeholder="Add a line…" value={newLine} onChange={e => setNewLine(e.target.value)} onKeyDown={e => e.key === 'Enter' && addLine()} style={{ flex: 1, fontFamily: "'Figtree', sans-serif", fontSize: 12, border: `1px solid ${C.border}`, padding: '6px 8px', color: C.slate, outline: 'none', background: 'white' }} />
+            <button onClick={addLine} style={btnSmall(C.slate, 'white')}>+ Line</button>
+          </div>
+
+          {/* Actions */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, paddingTop: 10, borderTop: `1px dashed ${C.border}` }}>
+            <button onClick={remove} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', background: 'none', color: C.goldDark, border: `1px solid ${C.border}`, padding: '6px 10px', cursor: 'pointer' }}>
+              {section.isBuiltIn ? 'Reset to default' : 'Delete section'}
+            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {saved && <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, color: C.magnolia }}>Saved ✓</span>}
+              <button onClick={save} disabled={saving} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', fontWeight: 500, background: C.magnolia, color: 'white', border: 'none', padding: '7px 16px', cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>
+                {saving ? 'Saving…' : 'Save to Library'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Editable exclusions list with a single "Save Exclusions" action that replaces
+// the whole list in the library.
+function TemplateExclusions({ initial }) {
+  const [items, setItems] = React.useState(initial);
+  const [newLine, setNewLine] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+  const [saved, setSaved] = React.useState(false);
+  const [open, setOpen] = React.useState(false);
+
+  function touched() { setSaved(false); }
+  function editLine(i, text) { setItems(a => a.map((t, j) => j === i ? text : t)); touched(); }
+  function deleteLine(i)     { setItems(a => a.filter((_, j) => j !== i)); touched(); }
+  function moveLine(i, dir) {
+    const j = i + dir;
+    if (j < 0 || j >= items.length) return;
+    setItems(a => { const n = [...a]; [n[i], n[j]] = [n[j], n[i]]; return n; });
+    touched();
+  }
+  function addLine() {
+    if (!newLine.trim()) return;
+    setItems(a => [...a, newLine.trim()]); setNewLine(''); touched();
+  }
+
+  async function save() {
+    setSaving(true);
+    const { error } = await cpReplaceExclusions(items.map(t => t.trim()).filter(Boolean));
+    setSaving(false);
+    if (error) { alert('Failed to save exclusions: ' + error.message); return; }
+    setSaved(true);
+  }
+
+  const lineInput = { flex: 1, fontFamily: "'Figtree', sans-serif", fontSize: 12, lineHeight: 1.5, border: `1px solid ${C.border}`, padding: '5px 8px', color: C.slate, outline: 'none', background: 'white', resize: 'vertical' };
+  const arrowBtn = (disabled) => ({ background: 'none', border: 'none', cursor: disabled ? 'default' : 'pointer', color: disabled ? C.border : C.goldDark, fontSize: 13, padding: '0 2px' });
+
+  return (
+    <div style={{ background: 'white', border: `1px solid ${C.border}`, borderLeft: `3px solid ${C.magnolia}`, marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', cursor: 'pointer', background: open ? '#FFF5F4' : 'white' }} onClick={() => setOpen(o => !o)}>
+        <span style={{ color: C.goldDark, fontSize: 12, width: 12 }}>{open ? '▾' : '▸'}</span>
+        <span style={{ flex: 1, fontFamily: "'Figtree', sans-serif", fontWeight: 500, fontSize: 12, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.magnolia }}>Standard Exclusions</span>
+        <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, color: C.goldDark }}>{items.length} line{items.length === 1 ? '' : 's'}</span>
+        {!saved && <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 8, letterSpacing: '0.12em', textTransform: 'uppercase', color: C.goldDark, fontStyle: 'italic' }}>unsaved</span>}
+      </div>
+      {open && (
+        <div style={{ padding: '8px 12px 12px', borderTop: `1px solid ${C.border}` }} onClick={e => e.stopPropagation()}>
+          {items.map((text, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 4, marginBottom: 6 }}>
+              <textarea value={text} rows={1} onChange={e => editLine(i, e.target.value)} style={lineInput} />
+              <button onClick={() => moveLine(i, -1)} disabled={i === 0} title="Move up" style={arrowBtn(i === 0)}>↑</button>
+              <button onClick={() => moveLine(i, 1)} disabled={i === items.length - 1} title="Move down" style={arrowBtn(i === items.length - 1)}>↓</button>
+              <button onClick={() => deleteLine(i)} title="Remove" style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.goldDark, fontSize: 12, padding: '2px 4px' }}>✕</button>
+            </div>
+          ))}
+          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+            <input placeholder="Add an exclusion…" value={newLine} onChange={e => setNewLine(e.target.value)} onKeyDown={e => e.key === 'Enter' && addLine()} style={{ flex: 1, fontFamily: "'Figtree', sans-serif", fontSize: 12, border: `1px solid ${C.border}`, padding: '6px 8px', color: C.slate, outline: 'none', background: 'white' }} />
+            <button onClick={addLine} style={btnSmall(C.magnolia, 'white')}>+ Line</button>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, marginTop: 14, paddingTop: 10, borderTop: `1px dashed ${C.border}` }}>
+            {saved && <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, color: C.magnolia }}>Saved ✓</span>}
+            <button onClick={save} disabled={saving} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', fontWeight: 500, background: C.magnolia, color: 'white', border: 'none', padding: '7px 16px', cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>
+              {saving ? 'Saving…' : 'Save Exclusions'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The Master Template editor screen. Loads the library, builds the editable
+// template view, and renders a card per section plus the exclusions editor.
+function LibraryEditor({ onBack }) {
+  const [template, setTemplate] = React.useState(null);   // null while loading
+  const [newSection, setNewSection] = React.useState('');
+
+  React.useEffect(() => {
+    let cancelled = false;
+    function tryLoad() {
+      if (typeof window.cpListLibrary !== 'function') { setTimeout(tryLoad, 100); return; }
+      cpListLibrary()
+        .then(lib => { if (!cancelled) setTemplate(buildTemplateView(lib)); })
+        .catch(() => { if (!cancelled) setTemplate({ sections: [], exclusions: [] }); });
+    }
+    tryLoad();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Add a brand-new custom section locally. It isn't persisted until the user
+  // adds lines and clicks "Save to Library" on its card.
+  function addSection() {
+    const title = newSection.trim();
+    if (!title) return;
+    const id = 'custom_' + Date.now();
+    setTemplate(t => ({ ...t, sections: [...t.sections, { id, title, items: [], isBuiltIn: false, hasOverride: false }] }));
+    setNewSection('');
+  }
+
+  // After a delete: drop custom sections from the list; for built-in sections,
+  // reload so the card re-renders with the restored hardcoded defaults.
+  function handleDeleted(sectionId) {
+    const sec = template.sections.find(s => s.id === sectionId);
+    if (sec && sec.isBuiltIn) {
+      cpListLibrary().then(lib => setTemplate(buildTemplateView(lib)));
+    } else {
+      setTemplate(t => ({ ...t, sections: t.sections.filter(s => s.id !== sectionId) }));
+    }
+  }
+
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: C.bgLight }}>
+      {/* Top bar */}
+      <div style={{ background: C.slate, height: 52, display: 'flex', alignItems: 'center', padding: '0 24px', gap: 16, flexShrink: 0 }}>
+        <button onClick={onBack} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(239,236,232,0.55)', padding: '0 8px 0 0' }}>← Projects</button>
+        <div style={{ width: 1, height: 20, background: 'rgba(239,236,232,0.15)' }} />
+        <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.22em', textTransform: 'uppercase', color: C.gold, fontWeight: 500 }}>Master Template</div>
+        <div style={{ flex: 1 }} />
+        <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, color: 'rgba(239,236,232,0.6)', fontStyle: 'italic' }}>Edits apply to new projects only</div>
+      </div>
+
+      {/* Body */}
+      <div style={{ flex: 1, overflow: 'auto', padding: '24px' }}>
+        <div style={{ maxWidth: 860, margin: '0 auto' }}>
+          {template === null ? (
+            <div style={{ textAlign: 'center', color: C.goldDark, padding: 64, fontFamily: "'Figtree', sans-serif", fontSize: 13 }}>Loading template…</div>
+          ) : (
+            <>
+              <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, color: C.goldDark, lineHeight: 1.6, marginBottom: 20 }}>
+                Edit the master scope library — the baseline every new project starts from. Changes here do <strong>not</strong> affect existing projects. Each section saves independently.
+              </div>
+
+              {template.sections.map(s => (
+                <TemplateSectionCard key={s.id} section={s} onDeleted={handleDeleted} />
+              ))}
+
+              <TemplateExclusions initial={template.exclusions} />
+
+              {/* Add new section */}
+              <div style={{ display: 'flex', gap: 8, marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
+                <input placeholder="New section name…" value={newSection} onChange={e => setNewSection(e.target.value)} onKeyDown={e => e.key === 'Enter' && addSection()} style={{ flex: 1, fontFamily: "'Figtree', sans-serif", fontSize: 12, border: `1px solid ${C.border}`, padding: '8px 10px', color: C.slate, outline: 'none', background: 'white' }} />
+                <button onClick={addSection} style={btnSmall(C.slate, 'white')}>+ Section</button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 
@@ -680,10 +1001,13 @@ function Root() {
           onOpen={(id) => { setShowMigration(false); navigate('editor', id); }}
         />
       )}
-      {/* Route to editor or project list based on URL */}
+      {/* Route based on URL. The Master Template editor is admin-only — a
+          non-admin who lands on ?view=library falls through to the project list. */}
       {view.name === 'editor' && view.id
         ? <ProjectEditor projectId={view.id} onBack={() => navigate('projects')} />
-        : <ProjectList onOpen={(id) => navigate('editor', id)} currentEmail={session?.user?.email} />
+        : view.name === 'library' && isAdmin(session?.user?.email)
+        ? <LibraryEditor onBack={() => navigate('projects')} />
+        : <ProjectList onOpen={(id) => navigate('editor', id)} onOpenLibrary={() => navigate('library')} currentEmail={session?.user?.email} />
       }
     </>
   );

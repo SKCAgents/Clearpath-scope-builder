@@ -285,3 +285,56 @@ window.cpSaveSectionToLibrary = async function (sectionId, sectionTitle, items) 
     return { error };
   }
 };
+
+// Removes a section's row from the master library. Behavior depends on the
+// section type:
+//   - Built-in section (id matches a hardcoded SCOPE_LIBRARY section): deleting
+//     the DB row reverts the section to its hardcoded defaults, because the
+//     merge in index.html falls back to SCOPE_LIBRARY when no DB row exists.
+//   - Custom section (user-created, id starts with 'custom_'): this removes it
+//     from the library entirely.
+// Admin-only at the database level (see the RLS policies).
+window.cpDeleteLibrarySection = async function (sectionId) {
+  const { error } = await _sb.from('library_sections').delete().eq('id', sectionId);
+  return { error };
+};
+
+// Replaces the ENTIRE exclusions library with the given ordered list of text
+// strings. Used by the Master Template editor's "Save Exclusions" action.
+// Admin-only via RLS.
+//
+// Strategy: insert the new rows FIRST, and only delete the old rows once the
+// insert succeeds. This is non-destructive — if the insert fails (e.g. a schema
+// mismatch), the existing exclusions are left untouched rather than wiped.
+window.cpReplaceExclusions = async function (texts) {
+  const clean = (texts || [])
+    .map(t => (typeof t === 'string' ? t : String(t)).trim())
+    .filter(Boolean);
+
+  // Snapshot the ids of the current rows so we can remove exactly them after
+  // the new rows land. (Selecting first also gives the delete an explicit
+  // filter — Supabase blocks unfiltered deletes by default.)
+  const { data: existing, error: readErr } = await _sb
+    .from('library_exclusions')
+    .select('id');
+  if (readErr) return { error: readErr };
+
+  // Insert the new ordered list. id is intentionally omitted so the database
+  // default (identity / uuid) assigns it.
+  if (clean.length) {
+    const rows = clean.map((text, i) => ({ text, sort_order: i }));
+    const { error: insErr } = await _sb.from('library_exclusions').insert(rows);
+    if (insErr) return { error: insErr };   // old rows still intact — safe
+  }
+
+  // New rows are in (or the list was intentionally emptied) — remove the old.
+  if (existing && existing.length) {
+    const { error: delErr } = await _sb
+      .from('library_exclusions')
+      .delete()
+      .in('id', existing.map(r => r.id));
+    if (delErr) return { error: delErr };
+  }
+
+  return { error: null };
+};
