@@ -476,13 +476,20 @@ function buildTemplateView(libraryData) {
 
   const builtInIds = new Set((window.SCOPE_LIBRARY || []).map(s => s.id));
 
+  // Each line becomes { text, included } — included reflects whether the master
+  // template pre-selects it for new projects (from the row's included_items).
+  const toItems = (rawItems, includedArr) => {
+    const inc = new Set(includedArr || []);
+    return (rawItems || []).map(t => { const str = String(t); return { text: str, included: inc.has(str) }; });
+  };
+
   // Built-in sections first (DB row overrides items/title when present)
   const builtIn = (window.SCOPE_LIBRARY || []).map(s => {
     const db = dbById[s.id];
     return {
       id: s.id,
       title: db?.title || s.title,
-      items: [...((db ? db.items : s.items) || [])],
+      items: toItems(db ? db.items : s.items, db?.included_items),
       isBuiltIn: true,
       hasOverride: !!db,   // true if a DB row currently overrides the hardcoded default
     };
@@ -492,7 +499,7 @@ function buildTemplateView(libraryData) {
   const custom = dbSections
     .filter(s => !builtInIds.has(s.id))
     .sort((a, b) => (a.sort_order ?? 999) - (b.sort_order ?? 999))
-    .map(s => ({ id: s.id, title: s.title, items: [...(s.items || [])], isBuiltIn: false, hasOverride: true }));
+    .map(s => ({ id: s.id, title: s.title, items: toItems(s.items, s.included_items), isBuiltIn: false, hasOverride: true }));
 
   const sections = [...builtIn, ...custom];
 
@@ -518,8 +525,10 @@ function TemplateSectionCard({ section, onSaved, onDeleted }) {
   // that there are unsaved edits again.
   function touched() { setSaved(false); }
 
-  function editLine(i, text) { setItems(arr => arr.map((t, j) => j === i ? text : t)); touched(); }
-  function deleteLine(i)     { setItems(arr => arr.filter((_, j) => j !== i)); touched(); }
+  // Lines are { text, included } — included = pre-selected by default in new projects.
+  function editLine(i, text)    { setItems(arr => arr.map((it, j) => j === i ? { ...it, text } : it)); touched(); }
+  function toggleIncluded(i)    { setItems(arr => arr.map((it, j) => j === i ? { ...it, included: !it.included } : it)); touched(); }
+  function deleteLine(i)        { setItems(arr => arr.filter((_, j) => j !== i)); touched(); }
   function moveLine(i, dir) {
     const j = i + dir;
     if (j < 0 || j >= items.length) return;
@@ -528,19 +537,27 @@ function TemplateSectionCard({ section, onSaved, onDeleted }) {
   }
   function addLine() {
     if (!newLine.trim()) return;
-    setItems(arr => [...arr, newLine.trim()]);
+    setItems(arr => [...arr, { text: newLine.trim(), included: false }]);
     setNewLine('');
+    touched();
+  }
+  // Pre-select all / clear all defaults for this section
+  const allIncluded = items.length > 0 && items.every(it => it.included);
+  function toggleAllIncluded() {
+    setItems(arr => arr.map(it => ({ ...it, included: !allIncluded })));
     touched();
   }
 
   async function save() {
     setSaving(true);
-    const clean = items.map(t => t.trim()).filter(Boolean);
-    const { error } = await cpSaveSectionToLibrary(section.id, title.trim() || section.title, clean);
+    const clean = items.map(it => ({ text: it.text.trim(), included: it.included })).filter(it => it.text);
+    const texts = clean.map(it => it.text);
+    const included = clean.filter(it => it.included).map(it => it.text);  // subset pre-selected by default
+    const { error } = await cpSaveSectionToLibrary(section.id, title.trim() || section.title, texts, included);
     setSaving(false);
     if (error) { alert('Failed to save section: ' + error.message); return; }
     setSaved(true);
-    if (onSaved) onSaved(section.id, { title: title.trim() || section.title, items: clean });
+    if (onSaved) onSaved(section.id, { title: title.trim() || section.title, items: texts });
   }
 
   async function remove() {
@@ -555,6 +572,8 @@ function TemplateSectionCard({ section, onSaved, onDeleted }) {
 
   const lineInput = { flex: 1, fontFamily: "'Figtree', sans-serif", fontSize: 12, lineHeight: 1.5, border: `1px solid ${C.border}`, padding: '5px 8px', color: C.slate, outline: 'none', background: 'white', resize: 'vertical' };
   const arrowBtn = (disabled) => ({ background: 'none', border: 'none', cursor: disabled ? 'default' : 'pointer', color: disabled ? C.border : C.goldDark, fontSize: 13, padding: '0 2px' });
+  // Square checkbox marking a line as pre-selected ("included") by default
+  const checkboxStyle = (on) => ({ width: 16, height: 16, marginTop: 4, flexShrink: 0, border: `1.5px solid ${on ? C.magnolia : C.goldDark}`, background: on ? C.magnolia : 'transparent', color: 'white', cursor: 'pointer', fontSize: 11, lineHeight: '13px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' });
 
   return (
     <div style={{ background: 'white', border: `1px solid ${C.border}`, borderLeft: `3px solid ${section.isBuiltIn ? C.gold : C.magnolia}`, marginBottom: 8 }}>
@@ -576,10 +595,20 @@ function TemplateSectionCard({ section, onSaved, onDeleted }) {
           <label style={{ display: 'block', fontFamily: "'Figtree', sans-serif", fontSize: 8, letterSpacing: '0.15em', textTransform: 'uppercase', color: C.goldDark, marginBottom: 4 }}>Section Title</label>
           <input value={title} onChange={e => { setTitle(e.target.value); touched(); }} style={{ width: '100%', fontFamily: "'Figtree', sans-serif", fontSize: 12, border: `1px solid ${C.border}`, padding: '6px 8px', color: C.slate, outline: 'none', marginBottom: 12 }} />
 
+          {/* Pre-select legend + select-all. A checked box means the line starts
+              "included" in every new project built from this template. */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 9, color: C.goldDark, fontStyle: 'italic' }}>Check a line to pre-select it in new projects</span>
+            {items.length > 0 && (
+              <button onClick={toggleAllIncluded} style={{ ...btnSmall(C.border, C.slate), fontSize: 9 }}>{allIncluded ? 'Clear all' : 'Select all'}</button>
+            )}
+          </div>
+
           {/* Lines */}
-          {items.map((text, i) => (
+          {items.map((it, i) => (
             <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 4, marginBottom: 6 }}>
-              <textarea value={text} rows={1} onChange={e => editLine(i, e.target.value)} style={lineInput} />
+              <button onClick={() => toggleIncluded(i)} title={it.included ? 'Pre-selected by default — click to unselect' : 'Click to pre-select in new projects'} style={checkboxStyle(it.included)}>{it.included ? '✓' : ''}</button>
+              <textarea value={it.text} rows={1} onChange={e => editLine(i, e.target.value)} style={lineInput} />
               <button onClick={() => moveLine(i, -1)} disabled={i === 0} title="Move up" style={arrowBtn(i === 0)}>↑</button>
               <button onClick={() => moveLine(i, 1)} disabled={i === items.length - 1} title="Move down" style={arrowBtn(i === items.length - 1)}>↓</button>
               <button onClick={() => deleteLine(i)} title="Remove line" style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.goldDark, fontSize: 12, padding: '2px 4px' }}>✕</button>

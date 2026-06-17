@@ -264,8 +264,19 @@ window.cpUpdateLibraryItem = async function (sectionId, sectionTitle, libraryTex
 // Saves a whole user-created section (title + items) to the library so it
 // appears as a complete section in all future projects. Upserts: creates the
 // row if it doesn't exist, otherwise replaces title and items.
-window.cpSaveSectionToLibrary = async function (sectionId, sectionTitle, items) {
+//
+// includedItems (optional): the subset of item texts that should be pre-checked
+// ("included") by default in new projects. Pass an array from the Master
+// Template editor; omit it (undefined) to leave the stored defaults untouched
+// on update, or empty on insert — so callers that don't manage defaults (e.g.
+// the build view's "Save Section to Library") don't clobber them.
+window.cpSaveSectionToLibrary = async function (sectionId, sectionTitle, items, includedItems) {
   const cleanItems = (items || []).map(t => typeof t === 'string' ? t : String(t)).filter(Boolean);
+  const managesIncluded = Array.isArray(includedItems);
+  const cleanIncluded = managesIncluded
+    ? includedItems.map(t => typeof t === 'string' ? t : String(t)).filter(Boolean)
+    : null;
+
   const { data: existing } = await _sb
     .from('library_sections')
     .select('id')
@@ -273,15 +284,19 @@ window.cpSaveSectionToLibrary = async function (sectionId, sectionTitle, items) 
     .maybeSingle();
 
   if (existing) {
+    const patch = { title: sectionTitle, items: cleanItems };
+    if (managesIncluded) patch.included_items = cleanIncluded;
     const { error } = await _sb
       .from('library_sections')
-      .update({ title: sectionTitle, items: cleanItems })
+      .update(patch)
       .eq('id', sectionId);
     return { error };
   } else {
+    const row = { id: sectionId, title: sectionTitle, sort_order: 999, items: cleanItems };
+    if (managesIncluded) row.included_items = cleanIncluded;
     const { error } = await _sb
       .from('library_sections')
-      .insert({ id: sectionId, title: sectionTitle, sort_order: 999, items: cleanItems });
+      .insert(row);
     return { error };
   }
 };

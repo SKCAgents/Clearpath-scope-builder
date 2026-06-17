@@ -446,6 +446,12 @@ function ExclusionsPanel({ exclusions, onUpdate }) {
   }
 
   const count = exclusions.filter(e => e.included).length;  // How many are currently checked
+  const allIncluded = exclusions.length > 0 && exclusions.every(e => e.included);
+
+  // Check or uncheck every exclusion at once (the "All / None" header button)
+  function toggleAll() {
+    onUpdate(exclusions.map(e => ({ ...e, included: !allIncluded })));
+  }
 
   return React.createElement('div', { style: { marginBottom: 2 } },
     // Header
@@ -462,6 +468,12 @@ function ExclusionsPanel({ exclusions, onUpdate }) {
       React.createElement('span', {
         style: { flex: 1, fontFamily: "'Figtree', sans-serif", fontWeight: 500, fontSize: 12, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.magnolia },
       }, 'Standard Exclusions'),
+      // Select all / clear all — stopPropagation so it doesn't toggle the accordion
+      React.createElement('button', {
+        onClick: e => { e.stopPropagation(); toggleAll(); },
+        title: 'Toggle all exclusions',
+        style: { ...btnSmall(C.border, C.slate), fontSize: 10 },
+      }, allIncluded ? 'None' : 'All'),
       React.createElement('span', {
         style: { fontFamily: "'Figtree', sans-serif", fontSize: 11, color: C.magnolia },
       }, `${count} included`)

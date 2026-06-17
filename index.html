@@ -109,13 +109,15 @@ function initSections(libraryData) {
   const dbById = {};
   dbSections.forEach(s => { dbById[s.id] = s; });
 
-  const toItem = (sectionId) => (text, i) => {
+  // includedSet — the texts the master template marks as pre-checked for this
+  // section (from the DB row's included_items). Items in the set start included.
+  const toItem = (sectionId, includedSet) => (text, i) => {
     const str = typeof text === 'string' ? text : String(text);
     return {
       id:          sectionId + '_' + i,
       text:        str,
       libraryText: str,   // Original text in the library — used by "Save to Library" to identify which entry to replace
-      included:    false,
+      included:    includedSet.has(str),
       custom:      false, // Custom = added at the project level (not from the library)
     };
   };
@@ -124,11 +126,12 @@ function initSections(libraryData) {
   const merged = SCOPE_LIBRARY.map(s => {
     const db = dbById[s.id];
     const items = db ? db.items : (s.items || []);
+    const includedSet = new Set(db?.included_items || []);  // built-ins with no DB row: nothing pre-checked
     return {
       id: s.id,
       title: db?.title || s.title,
       defaultOpen: false,
-      items: items.map(toItem(s.id)),
+      items: items.map(toItem(s.id, includedSet)),
     };
   });
 
@@ -137,12 +140,15 @@ function initSections(libraryData) {
   const dbOnly = dbSections
     .filter(s => !hardcodedIds.has(s.id))
     .sort((a, b) => (a.sort_order ?? 999) - (b.sort_order ?? 999))
-    .map(s => ({
-      id: s.id,
-      title: s.title,
-      defaultOpen: false,
-      items: (s.items || []).map(toItem(s.id)),
-    }));
+    .map(s => {
+      const includedSet = new Set(s.included_items || []);
+      return {
+        id: s.id,
+        title: s.title,
+        defaultOpen: false,
+        items: (s.items || []).map(toItem(s.id, includedSet)),
+      };
+    });
 
   return [...merged, ...dbOnly];
 }
