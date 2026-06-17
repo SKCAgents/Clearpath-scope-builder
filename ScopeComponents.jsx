@@ -91,7 +91,11 @@ function btnSmall(bg, color) {
 //   onSaveToLibrary — called with the new text when the user clicks "Save to
 //                     Library" in edit mode. Updates project AND library.
 //                     Null if not allowed (e.g. exclusions).
-function LineItem({ text, libraryText, included, onToggle, onEdit, onDelete, isCustom, onAddToLibrary, onSaveToLibrary }) {
+//   onMoveUp/onMoveDown — reorder this line within its section. Null when the
+//                     parent doesn't support reordering (the ↑/↓ arrows are
+//                     hidden entirely if no handler is provided).
+//   isFirst/isLast  — disables the up/down arrows at the list boundaries.
+function LineItem({ text, libraryText, included, onToggle, onEdit, onDelete, isCustom, onAddToLibrary, onSaveToLibrary, onMoveUp, onMoveDown, isFirst, isLast }) {
   const [editing, setEditing] = React.useState(false);  // Whether the edit textarea is showing
   const [val, setVal]         = React.useState(text);    // Live value while the user is typing
   const inputRef = React.useRef();
@@ -180,6 +184,16 @@ function LineItem({ text, libraryText, included, onToggle, onEdit, onDelete, isC
 
     // ── Action buttons (only shown when not in edit mode) ──
     !editing && React.createElement('div', { style: { display: 'flex', gap: 4, flexShrink: 0, alignItems: 'center' } },
+      // Move up/down — reorder this line within its section. Only rendered when
+      // the parent passes the handlers; grayed out at the top/bottom of the list.
+      onMoveUp && React.createElement('button', {
+        onClick: onMoveUp, disabled: isFirst, title: 'Move line up',
+        style: { background: 'none', border: 'none', cursor: isFirst ? 'default' : 'pointer', color: isFirst ? C.border : C.goldDark, fontSize: 13, padding: '0 2px' },
+      }, '↑'),
+      onMoveDown && React.createElement('button', {
+        onClick: onMoveDown, disabled: isLast, title: 'Move line down',
+        style: { background: 'none', border: 'none', cursor: isLast ? 'default' : 'pointer', color: isLast ? C.border : C.goldDark, fontSize: 13, padding: '0 2px' },
+      }, '↓'),
       // "+ lib" button — only visible on lines the user added themselves.
       // Clicking it saves this line to the master library so it appears in
       // all future projects automatically.
@@ -246,6 +260,16 @@ function SectionAccordion({ section, onUpdateItems, onToggleAll, onMoveUp, onMov
   // Remove one item from the list
   function deleteItem(idx) {
     const items = section.items.filter((_, i) => i !== idx);
+    onUpdateItems(section.id, items);
+  }
+
+  // Reorder one line within the section by swapping it with its neighbour
+  // (dir = -1 moves it up, +1 moves it down). No-op at the list boundaries.
+  function moveItem(idx, dir) {
+    const newIdx = idx + dir;
+    if (newIdx < 0 || newIdx >= section.items.length) return;
+    const items = [...section.items];
+    [items[idx], items[newIdx]] = [items[newIdx], items[idx]];
     onUpdateItems(section.id, items);
   }
 
@@ -345,6 +369,11 @@ function SectionAccordion({ section, onUpdateItems, onToggleAll, onMoveUp, onMov
           onSaveToLibrary: onSaveToLibrary
             ? newText => onSaveToLibrary(section.id, section.title, item.libraryText, newText)
             : null,
+          // Line reordering within this section
+          onMoveUp:   () => moveItem(idx, -1),
+          onMoveDown: () => moveItem(idx, 1),
+          isFirst:    idx === 0,
+          isLast:     idx === section.items.length - 1,
         })
       ),
       // "Add custom scope line" input at the bottom of the expanded body
@@ -400,6 +429,15 @@ function ExclusionsPanel({ exclusions, onUpdate }) {
     onUpdate(exclusions.filter((_, i) => i !== idx));
   }
 
+  // Reorder one exclusion by swapping with its neighbour (dir = -1 up, +1 down)
+  function move(idx, dir) {
+    const newIdx = idx + dir;
+    if (newIdx < 0 || newIdx >= exclusions.length) return;
+    const arr = [...exclusions];
+    [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
+    onUpdate(arr);
+  }
+
   // Add a new exclusion line
   function add() {
     if (!newLine.trim()) return;
@@ -438,6 +476,10 @@ function ExclusionsPanel({ exclusions, onUpdate }) {
           onToggle: () => toggle(idx),
           onEdit:   t => onUpdate(exclusions.map((e, i) => i === idx ? { ...e, text: t } : e)),
           onDelete: () => del(idx),
+          onMoveUp:   () => move(idx, -1),
+          onMoveDown: () => move(idx, 1),
+          isFirst:    idx === 0,
+          isLast:     idx === exclusions.length - 1,
         })
       ),
       React.createElement('div', { style: { display: 'flex', gap: 6, marginTop: 10 } },
