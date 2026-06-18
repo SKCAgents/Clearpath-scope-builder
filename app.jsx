@@ -161,6 +161,9 @@ function NewProjectModal({ onClose, onCreate }) {
           projectName: fields.name,
           clientName:  fields.client_name,
           address:     fields.address,
+          // Prepared date defaults to the current month + year (e.g. "June 2026").
+          // Editable later in the Project tab; frozen at creation so it doesn't drift.
+          date:        new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
         },
       },
     });
