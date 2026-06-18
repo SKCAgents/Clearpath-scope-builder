@@ -163,6 +163,17 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
       font: FONT_HEAD, size: 56, color: C_SLATE,
     })],
   }));
+  // Project address, directly under the name
+  if (info.address) {
+    headerChildren.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 60 },
+      children: [new TextRun({
+        text: info.address,
+        font: FONT_BODY, size: 24, color: C_SLATE,
+      })],
+    }));
+  }
   headerChildren.push(new Paragraph({
     alignment: AlignmentType.CENTER,
     spacing: { after: 400 },

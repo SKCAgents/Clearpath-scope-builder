@@ -220,7 +220,10 @@ const DEFAULT_INFO = {
 //   onBack       — called when the user clicks "← Projects" to return to the list
 function App({ initialState, onChange, libraryData, saveStatus, onBack }) {
   const [tab, setTab] = React.useState('build');
-  const [info, setInfo] = React.useState(initialState?.info || DEFAULT_INFO);
+  // Merge saved/seeded info over the defaults: a newly created project carries
+  // the name/client/address entered in the New Project dialog, and any field it
+  // doesn't specify (preparedBy, deposit, …) still picks up its default.
+  const [info, setInfo] = React.useState({ ...DEFAULT_INFO, ...(initialState?.info || {}) });
   const [sections, setSections] = React.useState(
     initialState?.sections ? backfillLibraryText(initialState.sections) : initSections(libraryData)
   );

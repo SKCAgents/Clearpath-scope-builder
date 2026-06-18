@@ -151,7 +151,19 @@ function NewProjectModal({ onClose, onCreate }) {
     e.preventDefault();
     if (!fields.name.trim()) return;
     setSaving(true);
-    const { data, error } = await cpCreateProject(fields);
+    // Seed the project's scope data so the build view's Project tab is
+    // pre-filled from what was entered here — no need to re-type name/client/
+    // address. App merges this over DEFAULT_INFO, so other defaults still apply.
+    const { data, error } = await cpCreateProject({
+      ...fields,
+      data: {
+        info: {
+          projectName: fields.name,
+          clientName:  fields.client_name,
+          address:     fields.address,
+        },
+      },
+    });
     if (error) { setSaving(false); alert('Error: ' + error.message); return; }
     // Pass the new project's ID up so the parent can navigate to the editor
     onCreate(data.id);

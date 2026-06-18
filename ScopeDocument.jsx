@@ -82,8 +82,12 @@ function ScopeDocument({ info, sections, exclusions, allowances, addOns = [] }) 
         React.createElement('div', {
           style:{ fontFamily:"'Cormorant Garamond', Georgia, serif", fontWeight:500, fontSize:36, color:slate, lineHeight:1.1, letterSpacing:'-0.01em' }
         }, info.projectName || 'Project Name'),
+        // Project address, directly under the name
+        info.address && React.createElement('div', {
+          style:{ fontFamily:"'Figtree', sans-serif", fontWeight:300, fontSize:13, color:slate, marginTop:8, letterSpacing:'0.02em' }
+        }, info.address),
         React.createElement('div', {
-          style:{ fontFamily:"'Figtree', sans-serif", fontSize:11, color:goldDark, marginTop:10, letterSpacing:'0.04em' }
+          style:{ fontFamily:"'Figtree', sans-serif", fontSize:11, color:goldDark, marginTop:6, letterSpacing:'0.04em' }
         }, `Prepared ${info.date || 'Date'} · Preliminary`)
       ),
 
