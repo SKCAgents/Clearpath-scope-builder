@@ -197,11 +197,15 @@ function NewProjectModal({ onClose, onCreate }) {
             <label style={labelStyle}>Project Type</label>
             <select value={fields.project_type} onChange={set('project_type')} style={{ ...inputStyle, cursor: 'pointer' }}>
               <option value="">— Select —</option>
-              <option value="addition">Addition</option>
               <option value="kitchen">Kitchen</option>
-              <option value="bath">Bath</option>
-              <option value="whole_home">Whole Home</option>
-              <option value="custom_build">Custom Build</option>
+              <option value="master_bath">Master Bath</option>
+              <option value="new_garage">New Garage</option>
+              <option value="attic">Attic</option>
+              <option value="interior_reno">Interior Reno</option>
+              <option value="addition">Addition</option>
+              <option value="pool">Pool</option>
+              <option value="pool_house">Pool House</option>
+              <option value="large_scale_renovation">Large Scale Renovation</option>
               <option value="other">Other</option>
             </select>
           </div>
