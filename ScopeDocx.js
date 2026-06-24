@@ -29,6 +29,17 @@ async function fetchImageBuffer(url) {
   }
 }
 
+// Convert a base64 data URL (e.g. uploaded design drawings) to a Uint8Array for
+// embedding in docx. The images are stored inline as data URLs, not fetchable
+// URLs, so fetch()/fetchImageBuffer can't be used here.
+function dataUrlToUint8Array(dataUrl) {
+  const b64 = String(dataUrl).split(',')[1] || '';
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
 // Brand colors (hex without #)
 const C_SLATE = '3F4E5A';
 const C_MAGNOLIA = '83443D';
@@ -36,7 +47,7 @@ const C_LIMESTONE = 'C3BDB1';
 const C_BG_LIGHT = 'F5F2EF';
 const C_BORDER = 'ECE8E3';
 
-async function generateScopeDocx({ info, sections, exclusions, allowances, addOns = [] }) {
+async function generateScopeDocx({ info, sections, exclusions, allowances, addOns = [], designDrawings = [] }) {
   const D = await loadDocxLib();
   const {
     Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
@@ -330,6 +341,26 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
     if (info.scheduleNotes) {
       sectionsContent.push(p(info.scheduleNotes, { before: 100 }));
     }
+  }
+
+  // ── Design Drawing ─────────────────────────────────────────────────────────
+  // Uploaded floor plans / sketches, stacked full-width, scaled to fit the
+  // content area (~6.5in page width) while preserving each image's aspect ratio.
+  if (designDrawings.length > 0) {
+    sectionsContent.push(sectionHeading('Design Drawing'));
+    const MAX_W = 520, MAX_H = 620;
+    designDrawings.forEach((d) => {
+      const w = d.w || MAX_W, h = d.h || MAX_H;
+      const scale = Math.min(MAX_W / w, MAX_H / h, 1);
+      sectionsContent.push(new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 160 },
+        children: [new ImageRun({
+          data: dataUrlToUint8Array(d.dataUrl),
+          transformation: { width: Math.round(w * scale), height: Math.round(h * scale) },
+        })],
+      }));
+    });
   }
 
   // ── Next Steps ───────────────────────────────────────────────────────────

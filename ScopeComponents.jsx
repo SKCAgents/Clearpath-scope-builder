@@ -655,7 +655,104 @@ function AllowancesPanel({ allowances, onChange }) {
 }
 
 
+// ── DesignDrawingsPanel ─────────────────────────────────────────────────────────
+// Upload screenshots of floor plans / design drawings. Images are resized and
+// re-encoded to JPEG on upload so they can live inline (as base64 data URLs) in
+// the project's saved JSON without bloating it. Usually 1–3 squarish images.
+const DD_MAX_DIM = 1600;   // longest side, px — keeps each image ~150–400 KB
+const DD_MAX_COUNT = 3;    // soft cap; matches typical usage
+
+// Load a File into a canvas, scale so the longest side ≤ DD_MAX_DIM, flatten on
+// white (JPEG has no alpha), and return { dataUrl, w, h }.
+function fileToResizedDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let w = img.naturalWidth, h = img.naturalHeight;
+      const scale = Math.min(1, DD_MAX_DIM / Math.max(w, h));
+      w = Math.max(1, Math.round(w * scale));
+      h = Math.max(1, Math.round(h * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve({ dataUrl: canvas.toDataURL('image/jpeg', 0.82), w, h });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read image: ' + file.name)); };
+    img.src = url;
+  });
+}
+
+function DesignDrawingsPanel({ drawings = [], onChange }) {
+  const [busy, setBusy] = React.useState(false);
+  const fileRef = React.useRef(null);
+
+  const handleFiles = async (fileList) => {
+    const files = Array.from(fileList || []).filter(f => f.type.startsWith('image/'));
+    if (!files.length) return;
+    const room = DD_MAX_COUNT - drawings.length;
+    const toAdd = files.slice(0, Math.max(0, room));
+    if (!toAdd.length) return;
+    setBusy(true);
+    try {
+      const added = [];
+      for (const f of toAdd) {
+        try {
+          const { dataUrl, w, h } = await fileToResizedDataUrl(f);
+          added.push({ id: 'dd_' + Date.now() + '_' + added.length, name: f.name, dataUrl, w, h });
+        } catch (e) { console.error(e); }
+      }
+      if (added.length) onChange([...drawings, ...added]);
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  const move = (i, dir) => {
+    const j = i + dir;
+    if (j < 0 || j >= drawings.length) return;
+    const n = [...drawings];
+    [n[i], n[j]] = [n[j], n[i]];
+    onChange(n);
+  };
+
+  const atCap = drawings.length >= DD_MAX_COUNT;
+
+  return React.createElement('div', { style: { padding: 16, borderTop: `1px solid ${C.border}` } },
+    React.createElement('div', { style: { fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.15em', textTransform: 'uppercase', color: C.goldDark, marginBottom: 4, fontWeight: 500 } }, 'Design Drawing'),
+    React.createElement('div', { style: { fontFamily: "'Figtree', sans-serif", fontSize: 10, color: C.goldDark, marginBottom: 14, fontStyle: 'italic' } }, 'Floor plans / sketches shown before Next Steps'),
+    drawings.map((d, i) =>
+      React.createElement('div', { key: d.id || i, style: { background: C.bgLight, padding: 8, marginBottom: 10, borderLeft: `3px solid ${C.gold}`, display: 'flex', gap: 8, alignItems: 'center' } },
+        React.createElement('img', { src: d.dataUrl, alt: d.name || 'drawing', style: { width: 56, height: 56, objectFit: 'cover', flexShrink: 0, border: `1px solid ${C.border}`, background: '#fff' } }),
+        React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+          React.createElement('div', { style: { fontFamily: "'Figtree', sans-serif", fontSize: 11, color: C.slate, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, d.name || 'Drawing ' + (i + 1)),
+          React.createElement('div', { style: { fontFamily: "'Figtree', sans-serif", fontSize: 9, color: C.goldDark } }, (d.w && d.h) ? d.w + ' × ' + d.h : '')
+        ),
+        React.createElement('button', { onClick: () => move(i, -1), disabled: i === 0, title: 'Move up', style: { background: 'none', border: 'none', cursor: i === 0 ? 'default' : 'pointer', color: C.goldDark, fontSize: 12, padding: '0 2px', opacity: i === 0 ? 0.3 : 1 } }, '↑'),
+        React.createElement('button', { onClick: () => move(i, 1), disabled: i === drawings.length - 1, title: 'Move down', style: { background: 'none', border: 'none', cursor: i === drawings.length - 1 ? 'default' : 'pointer', color: C.goldDark, fontSize: 12, padding: '0 2px', opacity: i === drawings.length - 1 ? 0.3 : 1 } }, '↓'),
+        React.createElement('button', { onClick: () => onChange(drawings.filter((_, j) => j !== i)), title: 'Remove', style: { background: 'none', border: 'none', cursor: 'pointer', color: C.goldDark, fontSize: 13, padding: '0 2px' } }, '✕')
+      )
+    ),
+    React.createElement('input', {
+      ref: fileRef, type: 'file', accept: 'image/*', multiple: true,
+      onChange: e => handleFiles(e.target.files),
+      style: { display: 'none' },
+    }),
+    React.createElement('button', {
+      onClick: () => fileRef.current && fileRef.current.click(),
+      disabled: busy || atCap,
+      style: { ...btnSmall(C.bgLight, C.slate), marginTop: 4, width: '100%', textAlign: 'center', cursor: (busy || atCap) ? 'default' : 'pointer', opacity: (busy || atCap) ? 0.5 : 1 },
+    }, busy ? 'Processing…' : atCap ? `Maximum ${DD_MAX_COUNT} drawings` : '+ Upload Drawing')
+  );
+}
+
+
 // ── Exports ───────────────────────────────────────────────────────────────────
 // Make everything available to index.html and app.jsx via the window object.
 // This is the browser-compatible equivalent of ES module exports.
-Object.assign(window, { SectionAccordion, ExclusionsPanel, ProjectInfo, AllowancesPanel, AddOnsPanel, C, btnSmall });
+Object.assign(window, { SectionAccordion, ExclusionsPanel, ProjectInfo, AllowancesPanel, AddOnsPanel, DesignDrawingsPanel, C, btnSmall });

@@ -230,13 +230,14 @@ function App({ initialState, onChange, libraryData, saveStatus, onBack }) {
   const [exclusions, setExclusions] = React.useState(initialState?.exclusions || initExclusions(libraryData));
   const [allowances, setAllowances] = React.useState(initialState?.allowances || DEFAULT_ALLOWANCES);
   const [addOns, setAddOns] = React.useState(initialState?.addOns || []);
+  const [designDrawings, setDesignDrawings] = React.useState(initialState?.designDrawings || []);
   const [sideTab, setSideTab] = React.useState('sections');
   const [searchQ, setSearchQ] = React.useState('');
 
   // Notify parent of changes (auto-save handled by ProjectEditor)
   React.useEffect(() => {
-    if (onChange) onChange({ info, sections, exclusions, allowances, addOns });
-  }, [info, sections, exclusions, allowances, addOns]);
+    if (onChange) onChange({ info, sections, exclusions, allowances, addOns, designDrawings });
+  }, [info, sections, exclusions, allowances, addOns, designDrawings]);
 
   // Render print frame when previewing
   React.useEffect(() => {
@@ -404,7 +405,7 @@ ${fontStyles}
     React.createElement('button', {
       onClick: async () => {
         try {
-          await window.generateScopeDocx({ info, sections, exclusions, allowances, addOns });
+          await window.generateScopeDocx({ info, sections, exclusions, allowances, addOns, designDrawings });
         } catch (err) {
           console.error(err);
           alert('Could not generate .docx — check console for details.');
@@ -446,7 +447,8 @@ ${fontStyles}
         ? React.createElement('div', { style:{flex:1,overflow:'auto'} },
             React.createElement(ProjectInfo, { info, onChange: setInfo }),
             React.createElement(AllowancesPanel, { allowances, onChange: setAllowances }),
-            React.createElement(AddOnsPanel, { addOns, onChange: setAddOns })
+            React.createElement(AddOnsPanel, { addOns, onChange: setAddOns }),
+            React.createElement(DesignDrawingsPanel, { drawings: designDrawings, onChange: setDesignDrawings })
           )
         : React.createElement('div', { style:{flex:1,overflow:'auto',padding:16} },
             // Stats
@@ -586,7 +588,7 @@ ${fontStyles}
     style:{ flex:1, overflow:'auto', background:'#ccc9c4', padding:'32px' }
   },
     React.createElement('div', { style:{ maxWidth:816, margin:'0 auto', background:'white', boxShadow:'0 4px 32px rgba(0,0,0,0.18)' } },
-      React.createElement(ScopeDocument, { info, sections, exclusions, allowances, addOns })
+      React.createElement(ScopeDocument, { info, sections, exclusions, allowances, addOns, designDrawings })
     )
   );
 

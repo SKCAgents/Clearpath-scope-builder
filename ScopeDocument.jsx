@@ -1,7 +1,7 @@
 // ─── Document Preview Component ─────────────────────────────────────────────
 // Renders a branded, print-ready scope of work from the builder state
 
-function ScopeDocument({ info, sections, exclusions, allowances, addOns = [] }) {
+function ScopeDocument({ info, sections, exclusions, allowances, addOns = [], designDrawings = [] }) {
   const slate = '#3F4E5A', offwhite = '#EFECE8', magnolia = '#83443D', gold = '#C3BDB1', goldDark = '#a8a09a', border = '#ece8e3';
 
   const includedSections = sections.filter(s => s.items.some(i => i.included));
@@ -215,6 +215,24 @@ function ScopeDocument({ info, sections, exclusions, allowances, addOns = [] }) 
         info.scheduleNotes && React.createElement('p', {
           style:{ fontFamily:"'Figtree', sans-serif", fontWeight:300, fontSize:11, lineHeight:1.7, color:slate, whiteSpace:'pre-wrap', marginTop:6 }
         }, info.scheduleNotes),
+        React.createElement(Rule)
+      ),
+
+      // Design Drawing — uploaded floor plans / sketches, stacked full-width
+      designDrawings.length > 0 && React.createElement('div', {},
+        React.createElement(SecTitle, { text:'Design Drawing' }),
+        designDrawings.map((d, i) =>
+          React.createElement('div', {
+            key:d.id || i,
+            style:{ pageBreakInside:'avoid', breakInside:'avoid', textAlign:'center', marginBottom:16 }
+          },
+            React.createElement('img', {
+              src:d.dataUrl,
+              alt:d.name || ('Design drawing ' + (i + 1)),
+              style:{ maxWidth:'100%', height:'auto', border:`1px solid ${border}` }
+            })
+          )
+        ),
         React.createElement(Rule)
       ),
 
