@@ -31,6 +31,16 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 // instance is internal to this file — all external code uses the window.cp* wrappers.
 const _sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// A section's default slot in the master order, used when first creating its
+// library row. Built-in sections keep their natural position from SCOPE_LIBRARY;
+// custom (user-created) sections fall to the end (999). Once the user drags the
+// sections into a custom order, cpReorderSections overwrites these with a clean
+// sequential order across every section.
+function _defaultSortOrder(sectionId) {
+  const idx = (window.SCOPE_LIBRARY || []).findIndex(s => s.id === sectionId);
+  return idx >= 0 ? idx : 999;
+}
+
 
 // ── Authentication ────────────────────────────────────────────────────────────
 
@@ -199,7 +209,7 @@ window.cpAddToLibrary = async function (sectionId, sectionTitle, itemText, hardc
     if (!seed.includes(itemText)) seed.push(itemText);
     const { error } = await _sb
       .from('library_sections')
-      .insert({ id: sectionId, title: sectionTitle, sort_order: 999, items: seed });
+      .insert({ id: sectionId, title: sectionTitle, sort_order: _defaultSortOrder(sectionId), items: seed });
     return { error };
   }
 };
@@ -256,7 +266,7 @@ window.cpUpdateLibraryItem = async function (sectionId, sectionTitle, libraryTex
     }
     const { error } = await _sb
       .from('library_sections')
-      .insert({ id: sectionId, title: sectionTitle, sort_order: 999, items });
+      .insert({ id: sectionId, title: sectionTitle, sort_order: _defaultSortOrder(sectionId), items });
     return { error };
   }
 };
@@ -292,7 +302,7 @@ window.cpSaveSectionToLibrary = async function (sectionId, sectionTitle, items, 
       .eq('id', sectionId);
     return { error };
   } else {
-    const row = { id: sectionId, title: sectionTitle, sort_order: 999, items: cleanItems };
+    const row = { id: sectionId, title: sectionTitle, sort_order: _defaultSortOrder(sectionId), items: cleanItems };
     if (managesIncluded) row.included_items = cleanIncluded;
     const { error } = await _sb
       .from('library_sections')
@@ -312,6 +322,48 @@ window.cpSaveSectionToLibrary = async function (sectionId, sectionTitle, items, 
 window.cpDeleteLibrarySection = async function (sectionId) {
   const { error } = await _sb.from('library_sections').delete().eq('id', sectionId);
   return { error };
+};
+
+// Persists a custom order for the whole section list (from the Master Template
+// editor's up/down controls). Writes a clean sequential sort_order — 0, 1, 2, …
+// — matching the given order, so the entire library sorts by sort_order from
+// then on.
+//
+// orderedSections: the sections in their new display order. Each is
+//   { id, title, items: [text], included_items: [text] }.
+//
+// Built-in sections may not have a library row yet (they only get one once
+// edited). Reordering one snapshots its current content into a new row — the
+// same "snapshot on first write" rule used elsewhere — so the order has a row
+// to live on. Existing rows are updated in place (content untouched, only
+// sort_order changes). Admin-only via RLS.
+window.cpReorderSections = async function (orderedSections) {
+  const list = orderedSections || [];
+
+  // Find which sections already have a library row so we know which need a
+  // full insert (snapshot) vs. a cheap sort_order-only update.
+  const { data: existing, error: readErr } = await _sb
+    .from('library_sections')
+    .select('id');
+  if (readErr) return { error: readErr };
+  const existingIds = new Set((existing || []).map(r => r.id));
+
+  const ops = list.map((s, i) => {
+    if (existingIds.has(s.id)) {
+      return _sb.from('library_sections').update({ sort_order: i }).eq('id', s.id);
+    }
+    // No row yet (an untouched built-in) — snapshot its current content so the
+    // order can be stored on it.
+    const items    = (s.items || []).map(t => String(t)).filter(Boolean);
+    const included = (s.included_items || []).map(t => String(t)).filter(Boolean);
+    return _sb.from('library_sections').insert({
+      id: s.id, title: s.title, items, included_items: included, sort_order: i,
+    });
+  });
+
+  const results = await Promise.all(ops);
+  const failed = results.find(r => r.error);
+  return { error: failed ? failed.error : null };
 };
 
 // Replaces the ENTIRE exclusions library with the given ordered list of text

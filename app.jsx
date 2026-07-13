@@ -514,13 +514,26 @@ function buildTemplateView(libraryData) {
     };
   });
 
-  // Then custom (DB-only) sections, in their saved sort order
+  // Custom (DB-only) sections
   const custom = dbSections
     .filter(s => !builtInIds.has(s.id))
-    .sort((a, b) => (a.sort_order ?? 999) - (b.sort_order ?? 999))
     .map(s => ({ id: s.id, title: s.title, items: toItems(s.items, s.included_items), isBuiltIn: false, hasOverride: true }));
 
-  const sections = [...builtIn, ...custom];
+  // Ordering. Once every built-in section has its own DB row, a full custom
+  // order has been established (the reorder control writes a sequential
+  // sort_order to ALL sections), so the whole list sorts by sort_order.
+  // Until then, keep the default: built-ins in their hardcoded order, then
+  // custom sections after them by sort_order. This is safe against older data
+  // where a built-in row might carry a stale sort_order.
+  const masterOrder = (window.SCOPE_LIBRARY || []).every(s => dbById[s.id]);
+  const orderOf = id => (dbById[id]?.sort_order ?? 999);
+  let sections;
+  if (masterOrder) {
+    sections = [...builtIn, ...custom].sort((a, b) => orderOf(a.id) - orderOf(b.id));
+  } else {
+    const customSorted = custom.slice().sort((a, b) => orderOf(a.id) - orderOf(b.id));
+    sections = [...builtIn, ...customSorted];
+  }
 
   // Exclusions: DB list if any, else hardcoded defaults
   const exclusions = (libraryData?.exclusions?.length)
@@ -532,7 +545,7 @@ function buildTemplateView(libraryData) {
 
 // One editable section card. Holds its own draft state so typing doesn't
 // re-render the whole list; "Save" pushes the draft to the library.
-function TemplateSectionCard({ section, onSaved, onDeleted }) {
+function TemplateSectionCard({ section, onSaved, onDeleted, onMoveUp, onMoveDown, canMoveUp, canMoveDown }) {
   const [title, setTitle] = React.useState(section.title);
   const [items, setItems] = React.useState(section.items);
   const [newLine, setNewLine] = React.useState('');
@@ -605,6 +618,10 @@ function TemplateSectionCard({ section, onSaved, onDeleted }) {
           ? <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 8, letterSpacing: '0.12em', textTransform: 'uppercase', color: section.hasOverride ? C.magnolia : C.gold }}>{section.hasOverride ? 'Customized' : 'Built-in'}</span>
           : <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 8, letterSpacing: '0.12em', textTransform: 'uppercase', color: C.magnolia }}>Custom</span>}
         {!saved && <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 8, letterSpacing: '0.12em', textTransform: 'uppercase', color: C.goldDark, fontStyle: 'italic' }}>unsaved</span>}
+        {/* Reorder this section within the master template. stopPropagation so
+            clicking an arrow moves the card without also toggling it open. */}
+        <button onClick={e => { e.stopPropagation(); onMoveUp && onMoveUp(); }} disabled={!canMoveUp} title="Move section up" style={arrowBtn(!canMoveUp)}>↑</button>
+        <button onClick={e => { e.stopPropagation(); onMoveDown && onMoveDown(); }} disabled={!canMoveDown} title="Move section down" style={arrowBtn(!canMoveDown)}>↓</button>
       </div>
 
       {/* Body */}
@@ -754,6 +771,34 @@ function LibraryEditor({ onBack }) {
     setNewSection('');
   }
 
+  // Move a section up (dir = -1) or down (dir = +1) in the master order.
+  // Updates the local list immediately (optimistic) and persists the new order
+  // to the library. Section cards are keyed by id, so their in-progress unsaved
+  // edits survive the reorder — only their position changes.
+  function moveSection(index, dir) {
+    const j = index + dir;
+    if (!template || j < 0 || j >= template.sections.length) return;
+    const next = [...template.sections];
+    [next[index], next[j]] = [next[j], next[index]];
+    setTemplate(t => ({ ...t, sections: next }));
+    persistOrder(next);
+  }
+
+  // Write the given section order to the library. Sends each section's current
+  // content too, so a built-in that has no row yet can be snapshotted (see
+  // cpReorderSections). Order and content save independently — this does not
+  // touch a card's unsaved title/line edits.
+  async function persistOrder(sections) {
+    const payload = sections.map(s => ({
+      id: s.id,
+      title: s.title,
+      items: s.items.map(it => it.text),
+      included_items: s.items.filter(it => it.included).map(it => it.text),
+    }));
+    const { error } = await cpReorderSections(payload);
+    if (error) alert('Failed to save the new section order: ' + error.message + '\nRefresh the page to resync.');
+  }
+
   // After a delete: drop custom sections from the list; for built-in sections,
   // reload so the card re-renders with the restored hardcoded defaults.
   function handleDeleted(sectionId) {
@@ -787,8 +832,16 @@ function LibraryEditor({ onBack }) {
                 Edit the master scope library — the baseline every new project starts from. Changes here do <strong>not</strong> affect existing projects. Each section saves independently.
               </div>
 
-              {template.sections.map(s => (
-                <TemplateSectionCard key={s.id} section={s} onDeleted={handleDeleted} />
+              {template.sections.map((s, i) => (
+                <TemplateSectionCard
+                  key={s.id}
+                  section={s}
+                  onDeleted={handleDeleted}
+                  onMoveUp={() => moveSection(i, -1)}
+                  onMoveDown={() => moveSection(i, 1)}
+                  canMoveUp={i > 0}
+                  canMoveDown={i < template.sections.length - 1}
+                />
               ))}
 
               <TemplateExclusions initial={template.exclusions} />

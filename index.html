@@ -139,7 +139,6 @@ function initSections(libraryData) {
   const hardcodedIds = new Set(SCOPE_LIBRARY.map(s => s.id));
   const dbOnly = dbSections
     .filter(s => !hardcodedIds.has(s.id))
-    .sort((a, b) => (a.sort_order ?? 999) - (b.sort_order ?? 999))
     .map(s => {
       const includedSet = new Set(s.included_items || []);
       return {
@@ -150,7 +149,17 @@ function initSections(libraryData) {
       };
     });
 
-  return [...merged, ...dbOnly];
+  // Ordering mirrors the Master Template editor (buildTemplateView in app.jsx):
+  // once every built-in section has its own DB row, the user has set a full
+  // custom order (sequential sort_order across all sections), so the whole list
+  // sorts by sort_order. Until then, keep the default order — built-ins in their
+  // hardcoded order, then custom sections by sort_order.
+  const masterOrder = SCOPE_LIBRARY.every(s => dbById[s.id]);
+  const orderOf = id => (dbById[id]?.sort_order ?? 999);
+  if (masterOrder) {
+    return [...merged, ...dbOnly].sort((a, b) => orderOf(a.id) - orderOf(b.id));
+  }
+  return [...merged, ...dbOnly.sort((a, b) => orderOf(a.id) - orderOf(b.id))];
 }
 
 // Builds the initial exclusions array. If the database has custom exclusions,
