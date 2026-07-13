@@ -199,20 +199,15 @@ function backfillLibraryText(loadedSections) {
 
 // Default allowance line items that every new project starts with.
 // The user can edit these amounts, add new ones, or remove them.
-const DEFAULT_ALLOWANCES = [
-  { id: 'a1', label: 'Plumbing Fixtures',                  amount: '$20,000',  desc: '' },
-  { id: 'a2', label: 'Decorative Lighting',                 amount: '$10,000',  desc: '' },
-  { id: 'a3', label: 'Interior Trim',                       amount: '$32,000',  desc: '' },
-  { id: 'a4', label: 'Cabinetry, Countertops & Backsplash', amount: '$102,000', desc: '' },
-  { id: 'a5', label: 'Appliances',                          amount: '$30,000',  desc: '' },
-];
+// New projects start with no allowances — the user adds them as needed.
+const DEFAULT_ALLOWANCES = [];
 
 // Default project info fields. preparedBy is pre-filled; everything else is blank.
 const DEFAULT_INFO = {
   projectName: '', clientName: '', address: '', date: '',
   preparedBy:  'ClearPath Construction',
   estimate: '', estimateLow: '', estimateHigh: '',
-  deposit: '$15,000', depositMemo: '',
+  deposit: '$5,000', depositMemo: '',
 };
 
 

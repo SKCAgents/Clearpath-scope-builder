@@ -554,7 +554,7 @@ function ProjectInfo({ info, onChange }) {
 
     React.createElement('div', { style: { marginTop: 20, paddingTop: 16, borderTop: `1px solid ${C.border}` } },
       sectionHeader('Project Description'),
-      textarea('Description', 'description', "A brief overview of the project — what we're building, key features, and goals…", 5),
+      textarea('Description', 'description', "A brief overview of the project — what we're building, key features, and goals…", 10),
 
       sectionHeader('Preliminary Estimate'),
       field('Total Estimate', 'estimate',     '$997,972'),
