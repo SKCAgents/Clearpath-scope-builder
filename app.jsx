@@ -291,7 +291,11 @@ function ProjectList({ onOpen, onOpenLibrary, currentEmail }) {
       </div>
 
       {/* ── Search and sort controls ── */}
-      <div style={{ padding: '14px 24px', background: 'white', borderBottom: `1px solid ${C.border}`, display: 'flex', gap: 12 }}>
+      {/* Full-width white bar, but its contents are centered to the same
+          document width (1106) as the project editor so the page doesn't
+          stretch edge-to-edge on wide screens. */}
+      <div style={{ background: 'white', borderBottom: `1px solid ${C.border}` }}>
+      <div style={{ maxWidth: 1106, margin: '0 auto', padding: '14px 24px', display: 'flex', gap: 12 }}>
         <input
           placeholder="Search by name, client, address…"
           value={search}
@@ -309,9 +313,12 @@ function ProjectList({ onOpen, onOpenLibrary, currentEmail }) {
           <option value="address">Address</option>
         </select>
       </div>
+      </div>
 
       {/* ── Project list (or empty/loading states) ── */}
+      {/* Inner wrapper centers the list at document width to match the editor. */}
       <div style={{ flex: 1, overflow: 'auto' }}>
+      <div style={{ maxWidth: 1106, margin: '0 auto' }}>
         {projects === null ? (
           // Still waiting on the database response
           <div style={{ textAlign: 'center', color: C.goldDark, padding: 64, fontFamily: "'Figtree', sans-serif", fontSize: 13 }}>Loading…</div>
@@ -339,6 +346,7 @@ function ProjectList({ onOpen, onOpenLibrary, currentEmail }) {
             {filtered.map(p => <ProjectRow key={p.id} project={p} onOpen={onOpen} onDeleted={reload} canDelete={canDelete} />)}
           </div>
         )}
+      </div>
       </div>
 
       {/* New project modal — rendered on top of everything when active */}

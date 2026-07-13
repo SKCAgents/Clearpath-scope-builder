@@ -522,7 +522,7 @@ function ProjectInfo({ info, onChange }) {
       React.createElement('input', {
         type, value: info[key] || '', placeholder,
         onChange: e => onChange({ ...info, [key]: e.target.value }),
-        style: { width: '100%', fontFamily: "'Figtree', sans-serif", fontSize: 12, color: C.slate, border: 'none', borderBottom: `1px solid ${C.border}`, padding: '5px 0', background: 'transparent', outline: 'none' },
+        style: { width: '100%', fontFamily: "'Figtree', sans-serif", fontSize: 14, color: C.slate, border: 'none', borderBottom: `1px solid ${C.border}`, padding: '8px 0', background: 'transparent', outline: 'none' },
       })
     );
 
@@ -535,7 +535,7 @@ function ProjectInfo({ info, onChange }) {
       React.createElement('textarea', {
         value: info[key] || '', placeholder, rows,
         onChange: e => onChange({ ...info, [key]: e.target.value }),
-        style: { width: '100%', fontFamily: "'Figtree', sans-serif", fontSize: 12, color: C.slate, border: `1px solid ${C.border}`, padding: '8px 10px', background: 'white', outline: 'none', resize: 'vertical', lineHeight: 1.5 },
+        style: { width: '100%', fontFamily: "'Figtree', sans-serif", fontSize: 14, color: C.slate, border: `1px solid ${C.border}`, padding: '10px 12px', background: 'white', outline: 'none', resize: 'vertical', lineHeight: 1.5 },
       })
     );
 
