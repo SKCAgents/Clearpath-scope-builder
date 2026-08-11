@@ -44,8 +44,21 @@ function dataUrlToUint8Array(dataUrl) {
 const C_SLATE = '3F4E5A';
 const C_MAGNOLIA = '83443D';
 const C_LIMESTONE = 'C3BDB1';
+const C_GOLD_DARK = 'A8A09A';
 const C_BG_LIGHT = 'F5F2EF';
 const C_BORDER = 'ECE8E3';
+
+// Usable text width on letter portrait with the 1" left/right margins set in the
+// section properties below: 12240 - 1440 - 1440. Table column widths must sum to
+// this or Word pushes the table past the right margin.
+const CONTENT_W = 9360;
+
+// Normalize money strings so the dollar sign is always followed by a single
+// space: "$1,000" -> "$ 1,000", "$—" -> "$ —". Leaves values with no "$" alone.
+function money(val) {
+  if (val == null) return '';
+  return String(val).replace(/\$\s*/g, '$ ');
+}
 
 async function generateScopeDocx({ info, sections, exclusions, allowances, addOns = [], designDrawings = [] }) {
   const D = await loadDocxLib();
@@ -126,7 +139,7 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
   // Single-cell shaded box (for callouts) — full-width table with explicit column width
   const shadedBox = (children, accent = C_MAGNOLIA, fill = C_BG_LIGHT) => new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
-    columnWidths: [10080], // ~7" usable width on letter w/ 0.75" margins, in twips
+    columnWidths: [CONTENT_W], // must match the usable text width, else the box overhangs the right margin
     borders: {
       top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
       bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
@@ -137,7 +150,7 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
     },
     rows: [new TableRow({
       children: [new TableCell({
-        width: { size: 10080, type: WidthType.DXA },
+        width: { size: CONTENT_W, type: WidthType.DXA },
         shading: { type: ShadingType.SOLID, color: fill, fill },
         margins: { top: 200, bottom: 200, left: 280, right: 280 },
         children,
@@ -146,11 +159,14 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
   });
 
   // ── Header (logo + title) ────────────────────────────────────────────────
+  // Mirrors the PDF/preview header: wordmark centered on its own, then the title
+  // block (name / address / prepared date) flush LEFT beneath it. Keep the gap
+  // under the logo tight — `after` below is the only knob for that spacing.
   const headerChildren = [];
   if (logoBuffer) {
     headerChildren.push(new Paragraph({
       alignment: AlignmentType.CENTER,
-      spacing: { after: 200 },
+      spacing: { after: 100 },
       children: [new ImageRun({
         data: logoBuffer,
         transformation: { width: 280, height: 88 },
@@ -158,16 +174,7 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
     }));
   }
   headerChildren.push(new Paragraph({
-    alignment: AlignmentType.CENTER,
-    spacing: { after: 80 },
-    children: [new TextRun({
-      text: 'SCOPE OF WORK',
-      font: FONT_BODY, size: 20, color: C_LIMESTONE, bold: true,
-      characterSpacing: 80,
-    })],
-  }));
-  headerChildren.push(new Paragraph({
-    alignment: AlignmentType.CENTER,
+    alignment: AlignmentType.LEFT,
     spacing: { after: 60 },
     children: [new TextRun({
       text: info.projectName || 'Project Name',
@@ -177,7 +184,7 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
   // Project address, directly under the name
   if (info.address) {
     headerChildren.push(new Paragraph({
-      alignment: AlignmentType.CENTER,
+      alignment: AlignmentType.LEFT,
       spacing: { after: 60 },
       children: [new TextRun({
         text: info.address,
@@ -186,7 +193,7 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
     }));
   }
   headerChildren.push(new Paragraph({
-    alignment: AlignmentType.CENTER,
+    alignment: AlignmentType.LEFT,
     spacing: { after: 400 },
     children: [new TextRun({
       text: `Prepared ${info.date || 'Date'}  ·  Preliminary`,
@@ -221,7 +228,7 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
           new Paragraph({
             spacing: { after: 40 },
             children: [
-              new TextRun({ text: a.amount || '$—', font: FONT_HEAD, size: 36, color: C_MAGNOLIA }),
+              new TextRun({ text: money(a.amount) || '$ —', font: FONT_HEAD, size: 36, color: C_MAGNOLIA }),
               new TextRun({ text: '   ' + (a.label || '').toUpperCase(), font: FONT_BODY, size: 18, color: C_SLATE, bold: true, characterSpacing: 30 }),
             ],
           }),
@@ -255,13 +262,13 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
       new Paragraph({
         spacing: { after: 80 },
         children: [new TextRun({
-          text: info.estimate, font: FONT_HEAD, size: 72, color: C_SLATE,
+          text: money(info.estimate), font: FONT_HEAD, size: 72, color: C_SLATE,
         })],
       }),
       ...(info.estimateLow && info.estimateHigh ? [new Paragraph({
         spacing: { after: 60 },
         children: [new TextRun({
-          text: `Range: ${info.estimateLow} — ${info.estimateHigh}  (±5%)`,
+          text: `Range: ${money(info.estimateLow)} — ${money(info.estimateHigh)}  (±5%)`,
           font: FONT_BODY, size: 22, color: '555555',
         })],
       })] : []),
@@ -284,7 +291,7 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
           tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
           children: [
             new TextRun({ text: a.label || '', font: FONT_BODY, size: 22, color: '333333' }),
-            new TextRun({ text: '\t' + (a.amount || ''), font: FONT_BODY, size: 22, color: C_SLATE, bold: true }),
+            new TextRun({ text: '\t' + money(a.amount), font: FONT_BODY, size: 22, color: C_SLATE, bold: true }),
           ],
         }));
       });
@@ -294,7 +301,7 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
         tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
         children: [
           new TextRun({ text: 'Total Allowances', font: FONT_BODY, size: 22, color: C_MAGNOLIA, bold: true }),
-          new TextRun({ text: '\t$' + totalAllowances.toLocaleString(), font: FONT_BODY, size: 22, color: C_MAGNOLIA, bold: true }),
+          new TextRun({ text: '\t$ ' + totalAllowances.toLocaleString(), font: FONT_BODY, size: 22, color: C_MAGNOLIA, bold: true }),
         ],
       }));
     }
@@ -309,10 +316,13 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
       sectionsContent.push(shadedBox([
         new Paragraph({
           spacing: { after: a.desc ? 100 : 0 },
-          tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
+          // Right tab set to the box's usable inner width (~8800 twips) rather
+          // than TabStopPosition.MAX — MAX overflows the shaded cell and makes
+          // the price collapse against the title.
+          tabStops: [{ type: TabStopType.RIGHT, position: 8800 }],
           children: [
             new TextRun({ text: a.title || 'Add-On', font: FONT_HEAD, size: 32, color: C_SLATE }),
-            ...(a.amount ? [new TextRun({ text: '\t' + a.amount, font: FONT_HEAD, size: 32, color: C_MAGNOLIA })] : []),
+            ...(a.amount ? [new TextRun({ text: '\t' + money(a.amount), font: FONT_HEAD, size: 32, color: C_MAGNOLIA })] : []),
           ],
         }),
         ...(a.desc ? [new Paragraph({
@@ -326,20 +336,82 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
   // ── Schedule ─────────────────────────────────────────────────────────────
   if (info.startDate || info.endDate || info.duration || info.scheduleNotes) {
     sectionsContent.push(sectionHeading('Schedule'));
-    [['Estimated Start', info.startDate], ['Estimated Completion', info.endDate], ['Total Duration', info.duration]]
-      .filter(([_, v]) => v)
-      .forEach(([label, value]) => {
-        sectionsContent.push(new Paragraph({
-          spacing: { after: 60 },
-          tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
+
+    const scheduleFields = [
+      ['Estimated Start', info.startDate],
+      ['Estimated Completion', info.endDate],
+      ['Total Duration', info.duration],
+    ].filter(([_, v]) => v);
+
+    // Side-by-side shaded cards, matching the preview/PDF layout.
+    //
+    // These used to be single paragraphs of `LABEL \t value` with a RIGHT tab
+    // stop. That tab stop does not survive a round-trip through Google Docs —
+    // the stop is dropped, the tab collapses, and the row renders as
+    // "TOTAL DURATION4 - 6 weeks" with no gap. Putting the label and value in
+    // separate paragraphs inside a table cell removes the tab entirely, so the
+    // spacing holds up in Word, Google Docs, and LibreOffice alike.
+    if (scheduleFields.length) {
+      const n = scheduleFields.length;
+      const GAP = 240;                                   // blank spacer column between cards
+      const cardW = Math.floor((CONTENT_W - GAP * (n - 1)) / n);
+
+      // Column grid alternates card / spacer / card / spacer / card
+      const columnWidths = [];
+      scheduleFields.forEach((_, i) => {
+        if (i > 0) columnWidths.push(GAP);
+        columnWidths.push(cardW);
+      });
+
+      const noBorder = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' };
+      const cells = [];
+      scheduleFields.forEach(([label, value], i) => {
+        if (i > 0) {
+          // Spacer cell — unshaded, no borders, creates the gutter between cards
+          cells.push(new TableCell({
+            width: { size: GAP, type: WidthType.DXA },
+            borders: { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder },
+            margins: { top: 0, bottom: 0, left: 0, right: 0 },
+            children: [new Paragraph({ children: [] })],
+          }));
+        }
+        cells.push(new TableCell({
+          width: { size: cardW, type: WidthType.DXA },
+          shading: { type: ShadingType.SOLID, color: C_BG_LIGHT, fill: C_BG_LIGHT },
+          borders: {
+            top: noBorder, bottom: noBorder, right: noBorder,
+            left: { style: BorderStyle.SINGLE, size: 18, color: C_MAGNOLIA },
+          },
+          margins: { top: 180, bottom: 180, left: 200, right: 160 },
           children: [
-            new TextRun({ text: label.toUpperCase(), font: FONT_BODY, size: 18, color: C_LIMESTONE, bold: true, characterSpacing: 40 }),
-            new TextRun({ text: '\t' + value, font: FONT_HEAD, size: 28, color: C_SLATE }),
+            new Paragraph({
+              spacing: { after: 80, line: 240 },
+              children: [new TextRun({
+                text: label.toUpperCase(),
+                font: FONT_BODY, size: 18, color: C_GOLD_DARK, bold: true, characterSpacing: 36,
+              })],
+            }),
+            new Paragraph({
+              spacing: { after: 0, line: 260 },
+              children: [new TextRun({ text: value, font: FONT_HEAD, size: 28, color: C_SLATE })],
+            }),
           ],
         }));
       });
+
+      sectionsContent.push(new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        columnWidths,
+        borders: {
+          top: noBorder, bottom: noBorder, left: noBorder, right: noBorder,
+          insideHorizontal: noBorder, insideVertical: noBorder,
+        },
+        rows: [new TableRow({ children: cells })],
+      }));
+    }
+
     if (info.scheduleNotes) {
-      sectionsContent.push(p(info.scheduleNotes, { before: 100 }));
+      sectionsContent.push(p(info.scheduleNotes, { before: 200 }));
     }
   }
 
@@ -369,7 +441,7 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
     [
       'Review and approve this scope of work.',
       'Sign the Design Agreement via DocuSign.',
-      `Submit the Design Deposit of ${info.deposit} via USPS Certified Mail.`,
+      `Submit the Design Deposit of ${money(info.deposit)} via USPS Certified Mail.`,
       `We'll schedule your design selections session with our professional designer.`,
     ].forEach((t, i) => sectionsContent.push(numStep(i+1, t)));
 
@@ -385,7 +457,7 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
         }),
         ...[
           ['Make Check Payable To', 'ClearPath Construction'],
-          ['Amount', info.deposit],
+          ['Amount', money(info.deposit)],
           ['Memo', info.depositMemo],
           ['Mail To', 'ClearPath Construction · 416 W Main St., Lebanon, TN 37087 · Via USPS Certified Mail'],
         ].map(([l, v]) => new Paragraph({
