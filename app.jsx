@@ -138,8 +138,15 @@ function ProjectRow({ project: p, onOpen, onDeleted, canDelete }) {
 
 // Modal dialog for creating a new project.
 // Only the project name is required. After creation, opens the editor immediately.
-function NewProjectModal({ onClose, onCreate }) {
+//
+// "Start from" lets the new project inherit an existing project's whole scope
+// (sections, allowances, add-ons, exclusions, estimate, schedule) — for jobs
+// that are near-copies of a previous one. The source project is left untouched.
+// existingProjects is the already-loaded list from ProjectList, so opening the
+// modal costs no extra network call.
+function NewProjectModal({ onClose, onCreate, existingProjects = [] }) {
   const [fields, setFields] = React.useState({ name: '', client_name: '', address: '', project_type: '' });
+  const [copyFrom, setCopyFrom] = React.useState('');   // '' = start blank
   const [saving, setSaving] = React.useState(false);
 
   // Helper that returns an onChange handler for a given field name
@@ -151,22 +158,27 @@ function NewProjectModal({ onClose, onCreate }) {
     e.preventDefault();
     if (!fields.name.trim()) return;
     setSaving(true);
-    // Seed the project's scope data so the build view's Project tab is
+
+    // Copying from an existing project: cpCopyProject pulls the source's full
+    // scope data and re-stamps the identifying fields with what was typed here.
+    // Otherwise: seed the project's scope data so the build view's Project tab is
     // pre-filled from what was entered here — no need to re-type name/client/
     // address. App merges this over DEFAULT_INFO, so other defaults still apply.
-    const { data, error } = await cpCreateProject({
-      ...fields,
-      data: {
-        info: {
-          projectName: fields.name,
-          clientName:  fields.client_name,
-          address:     fields.address,
-          // Prepared date defaults to the current month + year (e.g. "June 2026").
-          // Editable later in the Project tab; frozen at creation so it doesn't drift.
-          date:        new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
-        },
-      },
-    });
+    const { data, error } = copyFrom
+      ? await cpCopyProject(copyFrom, fields)
+      : await cpCreateProject({
+          ...fields,
+          data: {
+            info: {
+              projectName: fields.name,
+              clientName:  fields.client_name,
+              address:     fields.address,
+              // Prepared date defaults to the current month + year (e.g. "June 2026").
+              // Editable later in the Project tab; frozen at creation so it doesn't drift.
+              date:        new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+            },
+          },
+        });
     if (error) { setSaving(false); alert('Error: ' + error.message); return; }
     // Pass the new project's ID up so the parent can navigate to the editor
     onCreate(data.id);
@@ -181,6 +193,26 @@ function NewProjectModal({ onClose, onCreate }) {
       <div style={{ background: 'white', padding: 36, width: 480, maxWidth: '90vw' }}>
         <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 22, color: C.slate, marginBottom: 28 }}>New Project</div>
         <form onSubmit={handleSubmit}>
+          {/* Copy an existing project's scope as the starting point. Only shown
+              once there is at least one project to copy from. */}
+          {existingProjects.length > 0 && (
+            <div style={{ marginBottom: 18, paddingBottom: 18, borderBottom: `1px solid ${C.border}` }}>
+              <label style={labelStyle}>Start From</label>
+              <select value={copyFrom} onChange={e => setCopyFrom(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
+                <option value="">Blank scope (master template)</option>
+                {existingProjects.map(p => (
+                  <option key={p.id} value={p.id}>
+                    Copy of: {p.name || '(Untitled)'}{p.client_name ? ` — ${p.client_name}` : ''}
+                  </option>
+                ))}
+              </select>
+              {copyFrom && (
+                <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, lineHeight: 1.5, color: C.goldDark, marginTop: 8 }}>
+                  Copies that project's sections, allowances, add-ons, exclusions, estimate and schedule. The name, client and address below replace the originals, and the prepared date resets to this month. The original project is not changed.
+                </div>
+              )}
+            </div>
+          )}
           <div style={{ marginBottom: 18 }}>
             <label style={labelStyle}>Project Name *</label>
             <input required value={fields.name} onChange={set('name')} style={inputStyle} autoFocus />
@@ -212,7 +244,7 @@ function NewProjectModal({ onClose, onCreate }) {
           <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
             <button type="button" onClick={onClose} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', background: 'none', color: C.goldDark, border: `1px solid ${C.border}`, padding: '9px 18px', cursor: 'pointer' }}>Cancel</button>
             <button type="submit" disabled={saving} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', background: C.slate, color: C.offwhite, border: 'none', padding: '9px 20px', cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>
-              {saving ? 'Creating…' : 'Create Project'}
+              {saving ? (copyFrom ? 'Copying…' : 'Creating…') : (copyFrom ? 'Create Copy' : 'Create Project')}
             </button>
           </div>
         </form>
@@ -354,6 +386,7 @@ function ProjectList({ onOpen, onOpenLibrary, currentEmail }) {
         <NewProjectModal
           onClose={() => setShowNew(false)}
           onCreate={(id) => { setShowNew(false); onOpen(id); }}
+          existingProjects={projects || []}
         />
       )}
     </div>

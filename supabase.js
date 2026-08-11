@@ -134,6 +134,46 @@ window.cpCreateProject = async function ({ name, client_name, address, project_t
   return { data, error };
 };
 
+// Creates a new project seeded from an existing one — for the common case of a
+// new job whose scope is nearly identical to a previous job.
+//
+// Everything in the source project's scope data is carried over (section
+// selections, allowances, add-ons, exclusions, estimate, schedule, any uploaded
+// design drawings), then the identifying fields are overwritten with the new
+// project's own name / client / address and a fresh prepared date. The source
+// project is never modified.
+//
+// overrides: { name, client_name, address, project_type } for the new project.
+//   A blank project_type inherits the source project's type.
+window.cpCopyProject = async function (sourceId, overrides) {
+  const { data: src, error: readErr } = await window.cpGetProject(sourceId);
+  if (readErr) return { data: null, error: readErr };
+  if (!src)    return { data: null, error: new Error('Source project not found.') };
+
+  const srcData = (src.data && typeof src.data === 'object') ? src.data : {};
+
+  // Deep-copy so the new row never shares object references with the source.
+  const copied = JSON.parse(JSON.stringify(srcData));
+
+  copied.info = {
+    ...(copied.info || {}),
+    projectName: overrides.name,
+    clientName:  overrides.client_name,
+    address:     overrides.address,
+    // Re-stamp the prepared date rather than inheriting the source's — an old
+    // date on a brand-new scope reads as stale to the client.
+    date:        new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+  };
+
+  return window.cpCreateProject({
+    name:         overrides.name,
+    client_name:  overrides.client_name,
+    address:      overrides.address,
+    project_type: overrides.project_type || src.project_type || '',
+    data:         copied,
+  });
+};
+
 // Saves changes to an existing project. Called by the auto-save system in
 // ProjectEditor after the user pauses typing for 1.5 seconds.
 // The 'fields' object can contain any subset of project columns to update.
