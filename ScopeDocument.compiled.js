@@ -589,7 +589,7 @@ function ScopeDocument({
       color: goldDark,
       letterSpacing: '0.04em'
     }
-  }, 'ClearPath Construction  ·  416 W Main St., Lebanon, TN 37087  ·  hello@clearpath.build  ·  (615) 555-0182')));
+  }, 'ClearPath Construction  ·  416 W Main St., Lebanon, TN 37087  ·  hello@clearpathcustom.com  ·  629-263-0659')));
 }
 Object.assign(window, {
   ScopeDocument

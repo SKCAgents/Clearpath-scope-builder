@@ -522,7 +522,7 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
     alignment: AlignmentType.CENTER,
     spacing: { before: 100 },
     children: [new TextRun({
-      text: 'ClearPath Construction  ·  416 W Main St., Lebanon, TN 37087  ·  hello@clearpath.build  ·  (615) 555-0182',
+      text: 'ClearPath Construction  ·  416 W Main St., Lebanon, TN 37087  ·  hello@clearpathcustom.com  ·  629-263-0659',
       font: FONT_BODY, size: 16, color: '888888',
     })],
   }));

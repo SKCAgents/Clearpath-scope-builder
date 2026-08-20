@@ -281,7 +281,7 @@ function ScopeDocument({ info, sections, exclusions, allowances, addOns = [], de
 
       // Footer
       React.createElement('div', { style:{ borderTop:`1px solid ${border}`, paddingTop:12, marginTop:40, textAlign:'center', fontFamily:"'Figtree', sans-serif", fontSize:8, color:goldDark, letterSpacing:'0.04em' } },
-        'ClearPath Construction  ·  416 W Main St., Lebanon, TN 37087  ·  hello@clearpath.build  ·  (615) 555-0182'
+        'ClearPath Construction  ·  416 W Main St., Lebanon, TN 37087  ·  hello@clearpathcustom.com  ·  629-263-0659'
       )
     )
   );
