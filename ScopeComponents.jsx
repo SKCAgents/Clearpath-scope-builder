@@ -508,23 +508,58 @@ function ExclusionsPanel({ exclusions, onUpdate }) {
 }
 
 
+// ── Design deposit tiers ──────────────────────────────────────────────────────
+// The design deposit is set by the size of the contract, so it can be derived
+// from the preliminary estimate instead of typed in by hand:
+//   under $100,000          → $10,000
+//   $100,000 to $250,000    → $15,000
+//   over $250,000           → $20,000
+// Returns '' when the estimate isn't a usable dollar amount (blank, "TBD", …).
+const DEPOSIT_TIERS = ['$10,000', '$15,000', '$20,000'];
+
+function depositForEstimate(estimate) {
+  const n = parseFloat(String(estimate || '').replace(/[^0-9.]/g, ''));
+  if (!isFinite(n) || n <= 0) return '';
+  if (n < 100000)  return DEPOSIT_TIERS[0];
+  if (n <= 250000) return DEPOSIT_TIERS[1];
+  return DEPOSIT_TIERS[2];
+}
+
+// Deposit values that the tier logic is allowed to replace: still blank, the
+// new-project default, or a tier amount it filled in earlier. Anything else was
+// typed by hand, so a later estimate edit leaves it alone.
+const AUTO_DEPOSITS = ['', '$5,000', ...DEPOSIT_TIERS];
+
+
 // ── ProjectInfo ───────────────────────────────────────────────────────────────
 // The left sidebar form where the user fills in project details — name, client,
 // address, dates, description, estimate, and deposit info. All fields feed into
 // the printed scope document via the ScopeDocument component.
 function ProjectInfo({ info, onChange }) {
-  // Returns a rendered text input field with a label above it
-  const field = (label, key, placeholder, type = 'text') =>
+  // Returns a rendered text input field with a label above it. Pass onInput to
+  // override what a keystroke does (the Total Estimate field uses this to fill
+  // in the deposit at the same time).
+  const field = (label, key, placeholder, type = 'text', onInput = null) =>
     React.createElement('div', { style: { marginBottom: 14 } },
       React.createElement('label', {
         style: { display: 'block', fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.15em', textTransform: 'uppercase', color: C.goldDark, marginBottom: 4, fontWeight: 500 },
       }, label),
       React.createElement('input', {
         type, value: info[key] || '', placeholder,
-        onChange: e => onChange({ ...info, [key]: e.target.value }),
+        onChange: onInput || (e => onChange({ ...info, [key]: e.target.value })),
         style: { width: '100%', fontFamily: "'Figtree', sans-serif", fontSize: 14, color: C.slate, border: 'none', borderBottom: `1px solid ${C.border}`, padding: '8px 0', background: 'transparent', outline: 'none' },
       })
     );
+
+  // Typing a Total Estimate also sets the Design Deposit from the tier table,
+  // unless the deposit was entered by hand.
+  const onEstimateChange = e => {
+    const estimate = e.target.value;
+    const next = { ...info, estimate };
+    const tier = depositForEstimate(estimate);
+    if (tier && AUTO_DEPOSITS.includes((info.deposit || '').trim())) next.deposit = tier;
+    onChange(next);
+  };
 
   // Returns a rendered multi-line textarea with a label above it
   const textarea = (label, key, placeholder, rows = 4) =>
@@ -557,11 +592,13 @@ function ProjectInfo({ info, onChange }) {
       textarea('Description', 'description', "A brief overview of the project — what we're building, key features, and goals…", 15),
 
       sectionHeader('Preliminary Estimate'),
-      field('Total Estimate', 'estimate',     '$997,972'),
+      field('Total Estimate', 'estimate',     '$997,972', 'text', onEstimateChange),
       field('Low Range',      'estimateLow',  '$948,000'),
       field('High Range',     'estimateHigh', '$1,048,000'),
 
       sectionHeader('Design Deposit'),
+      React.createElement('div', { style: { fontFamily: "'Figtree', sans-serif", fontSize: 10, color: C.goldDark, marginTop: -6, marginBottom: 12, fontStyle: 'italic' } },
+        'Set from the estimate — type over it to use a different amount'),
       field('Deposit Amount', 'deposit',     '$15,000'),
       field('Deposit Memo',   'depositMemo', 'e.g. Walter Addition Design Fee'),
 
