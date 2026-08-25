@@ -6,10 +6,6 @@ function ScopeDocument({ info, sections, exclusions, allowances, addOns = [], de
 
   const includedSections = sections.filter(s => s.items.some(i => i.included));
   const includedExclusions = exclusions.filter(e => e.included);
-  const totalAllowances = allowances.reduce((sum, a) => {
-    const n = parseFloat((a.amount || '0').replace(/[$,]/g, ''));
-    return sum + (isNaN(n) ? 0 : n);
-  }, 0);
 
   // Styles
   const docStyle = { fontFamily: "'Figtree', sans-serif", fontWeight: 300, fontSize: 11, color: slate, background: '#fff', width: '100%' };
@@ -157,16 +153,6 @@ function ScopeDocument({ info, sections, exclusions, allowances, addOns = [], de
             React.createElement('div', { style:{ fontFamily:"'Figtree', sans-serif", fontSize:10, color:'rgba(239,236,232,0.4)', marginTop:4 } },
               'Final price determined after final scope and selections are made.'
             )
-          ),
-          allowances.length > 0 && React.createElement('div', { style:{ textAlign:'right' } },
-            React.createElement('div', { style:{ fontFamily:"'Figtree', sans-serif", fontSize:9, letterSpacing:'0.2em', textTransform:'uppercase', color:gold, marginBottom:10 } }, 'Allowance Summary'),
-            allowances.map((a,i) => React.createElement('div', { key:i, style:{ fontFamily:"'Figtree', sans-serif", fontSize:10, color:'rgba(239,236,232,0.7)', marginBottom:4 } },
-              React.createElement('span', {}, a.label + '   '),
-              React.createElement('span', { style:{ color:offwhite, fontWeight:500 } }, a.amount)
-            )),
-            React.createElement('div', {
-              style:{ fontFamily:"'Figtree', sans-serif", fontSize:10, color:gold, fontWeight:500, marginTop:8, borderTop:'1px solid rgba(239,236,232,0.2)', paddingTop:8 }
-            }, `Total Allowances   $${totalAllowances.toLocaleString()}`)
           )
         )
       ),

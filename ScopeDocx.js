@@ -74,10 +74,6 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
 
   const includedSections = sections.filter(s => s.items.some(i => i.included));
   const includedExclusions = exclusions.filter(e => e.included);
-  const totalAllowances = allowances.reduce((sum, a) => {
-    const n = parseFloat((a.amount || '0').replace(/[$,]/g, ''));
-    return sum + (isNaN(n) ? 0 : n);
-  }, 0);
 
   // ── Helpers ──────────────────────────────────────────────────────────────
   const FONT_HEAD = 'Cormorant Garamond';
@@ -279,32 +275,6 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
         })],
       }),
     ], C_SLATE, C_BG_LIGHT));
-
-    // Allowance summary
-    if (allowances.length > 0) {
-      sectionsContent.push(new Paragraph({ spacing: { before: 200, after: 80 }, children: [
-        new TextRun({ text: 'ALLOWANCE SUMMARY', font: FONT_BODY, size: 18, color: C_SLATE, bold: true, characterSpacing: 60 }),
-      ]}));
-      allowances.forEach(a => {
-        sectionsContent.push(new Paragraph({
-          spacing: { after: 60 },
-          tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
-          children: [
-            new TextRun({ text: a.label || '', font: FONT_BODY, size: 22, color: '333333' }),
-            new TextRun({ text: '\t' + money(a.amount), font: FONT_BODY, size: 22, color: C_SLATE, bold: true }),
-          ],
-        }));
-      });
-      sectionsContent.push(new Paragraph({
-        spacing: { before: 80, after: 80 },
-        border: { top: { style: BorderStyle.SINGLE, color: C_BORDER, size: 8 } },
-        tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
-        children: [
-          new TextRun({ text: 'Total Allowances', font: FONT_BODY, size: 22, color: C_MAGNOLIA, bold: true }),
-          new TextRun({ text: '\t$ ' + totalAllowances.toLocaleString(), font: FONT_BODY, size: 22, color: C_MAGNOLIA, bold: true }),
-        ],
-      }));
-    }
   }
 
   // ── Optional Add-Ons ─────────────────────────────────────────────────────
