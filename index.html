@@ -66,6 +66,7 @@
 
 <script type="module" src="supabase.js"></script>
 <script type="text/babel" src="ScopeLibrary.jsx"></script>
+<script src="ScopeSchedule.js"></script>
 <script type="text/babel" src="ScopeComponents.jsx"></script>
 <script type="text/babel" src="ScopeDocument.jsx"></script>
 <script src="ScopeDocx.js"></script>
@@ -104,20 +105,44 @@
 // the library — so that when a user edits an item locally and later clicks
 // "Save to Library", we know which library entry to replace.
 // All items start unchecked — the user selects what applies to their project.
-function initSections(libraryData) {
-  const dbSections = libraryData?.sections || [];
+// projectType selects a PROJECT_TEMPLATES entry (see ScopeLibrary.jsx). The
+// template decides which sections start switched on:
+//
+//   section in the template     → its lines start checked. If the master
+//                                 template marks specific lines as pre-selected
+//                                 for that section, only those get checked;
+//                                 otherwise all of them do.
+//   section not in the template  → nothing checked, but the section is still
+//                                 there to check by hand.
+//   no project type chosen      → the original behaviour: master template
+//                                 pre-selections only.
+function initSections(libraryData, projectType) {
+  // Settings rows (ids prefixed '__', e.g. the allowance defaults) share the
+  // library_sections table but are not scope sections — skip them.
+  const dbSections = (libraryData?.sections || []).filter(s => !String(s.id).startsWith('__'));
   const dbById = {};
   dbSections.forEach(s => { dbById[s.id] = s; });
 
+  const tmpl = typeof templateFor === 'function' ? templateFor(projectType) : null;
+  const templateSections = tmpl ? new Set(tmpl.sections) : null;
+
+  // How a section's lines start out. 'master' = follow the master template's
+  // pre-selections, 'all' = everything checked, 'none' = nothing checked.
+  const inclusionMode = (sectionId, includedSet) => {
+    if (!templateSections) return 'master';
+    if (!templateSections.has(sectionId)) return 'none';
+    return includedSet.size ? 'master' : 'all';
+  };
+
   // includedSet — the texts the master template marks as pre-checked for this
-  // section (from the DB row's included_items). Items in the set start included.
-  const toItem = (sectionId, includedSet) => (text, i) => {
+  // section (from the DB row's included_items).
+  const toItem = (sectionId, includedSet, mode) => (text, i) => {
     const str = typeof text === 'string' ? text : String(text);
     return {
       id:          sectionId + '_' + i,
       text:        str,
       libraryText: str,   // Original text in the library — used by "Save to Library" to identify which entry to replace
-      included:    includedSet.has(str),
+      included:    mode === 'all' ? true : mode === 'none' ? false : includedSet.has(str),
       custom:      false, // Custom = added at the project level (not from the library)
     };
   };
@@ -131,7 +156,7 @@ function initSections(libraryData) {
       id: s.id,
       title: db?.title || s.title,
       defaultOpen: false,
-      items: items.map(toItem(s.id, includedSet)),
+      items: items.map(toItem(s.id, includedSet, inclusionMode(s.id, includedSet))),
     };
   });
 
@@ -145,7 +170,7 @@ function initSections(libraryData) {
         id: s.id,
         title: s.title,
         defaultOpen: false,
-        items: (s.items || []).map(toItem(s.id, includedSet)),
+        items: (s.items || []).map(toItem(s.id, includedSet, inclusionMode(s.id, includedSet))),
       };
     });
 
@@ -195,18 +220,110 @@ function backfillLibraryText(loadedSections) {
 }
 
 
+// Rebuilds the section list for a different project type, keeping the work the
+// user has already done that the template can't know about:
+//   - lines they added to a library section themselves (item.custom) are
+//     re-appended to that section
+//   - whole sections they created in this project (not in the library at all)
+//     are kept as-is at the end
+// Everything else — which library lines are checked — comes from the new
+// template, which is the point of switching.
+function applyTemplate(prevSections, libraryData, projectType) {
+  const fresh = initSections(libraryData, projectType);
+  const freshIds = new Set(fresh.map(s => s.id));
+  const prev = prevSections || [];
+
+  const rebuilt = fresh.map(s => {
+    const before = prev.find(p => p.id === s.id);
+    if (!before) return s;
+    const customs = (before.items || []).filter(i => i.custom);
+    return customs.length ? { ...s, items: [...s.items, ...customs] } : s;
+  });
+
+  return [...rebuilt, ...prev.filter(p => !freshIds.has(p.id))];
+}
+
+
 // ── Default values ────────────────────────────────────────────────────────────
 
-// Default allowance line items that every new project starts with.
-// The user can edit these amounts, add new ones, or remove them.
-// New projects start with no allowances — the user adds them as needed.
-const DEFAULT_ALLOWANCES = [];
+// The allowance checklist every project starts with — one entry per category in
+// ALLOWANCE_CATEGORIES (ScopeLibrary.jsx), all unchecked, each carrying its
+// default amount. The user checks the ones that apply and edits amounts per
+// project; unchecked categories print as explicitly excluded.
+//
+// Amounts come from the admin-set defaults in the library when they exist
+// (cpParseAllowanceDefaults), otherwise from the hardcoded ALLOWANCE_CATEGORIES.
+// Matching is by category id, falling back to label so a renamed category still
+// lines up.
+function initAllowances(libraryData) {
+  const overrides = typeof window.cpParseAllowanceDefaults === 'function'
+    ? window.cpParseAllowanceDefaults(libraryData)
+    : null;
+
+  const byId = {}, byLabel = {};
+  (overrides || []).forEach(o => {
+    if (o.id) byId[o.id] = o;
+    byLabel[o.label] = o;
+  });
+
+  return (window.ALLOWANCE_CATEGORIES || []).map(c => {
+    const o = byId[c.id] || byLabel[c.label];
+    return { id: c.id, label: c.label, amount: (o ? o.amount : c.amount), included: false };
+  });
+}
+
+// Reconciles a saved allowance list with the current category list.
+//
+// Projects saved before the checklist existed hold free-form rows the user
+// typed by hand ({ label, amount } with no id and no included flag). Those are
+// kept — dropping them would silently delete numbers from a live quote — and
+// they stay included, since that is what they meant at the time. Any category
+// missing from the saved list is appended unchecked with its default amount, so
+// a project opened after a new category is added shows the full checklist.
+function mergeAllowances(saved, libraryData) {
+  const defaults = initAllowances(libraryData);
+  const savedList = saved || [];
+
+  const matched = new Set();
+  const merged = defaults.map(d => {
+    const hit = savedList.find(s =>
+      (s.id && s.id === d.id) || (s.label || '').trim().toLowerCase() === d.label.toLowerCase()
+    );
+    if (!hit) return d;
+    matched.add(hit);
+    return {
+      id: d.id,
+      label: d.label,
+      amount: hit.amount !== undefined && hit.amount !== '' ? hit.amount : d.amount,
+      // A legacy row has no `included` field; it was on the document, so it
+      // stays on. Only an explicit false means the user unchecked it.
+      included: hit.included !== undefined ? !!hit.included : true,
+    };
+  });
+
+  // Anything the user added by hand that isn't one of the fixed categories
+  const extras = savedList
+    .filter(s => !matched.has(s))
+    .map(s => ({ ...s, included: s.included !== undefined ? !!s.included : true }));
+
+  return [...merged, ...extras];
+}
 
 // Default project info fields. preparedBy is pre-filled; everything else is blank.
+//
+// estimate is a single price — the document prints it as a ±10% range and never
+// prints this figure itself (see cpPriceRange in ScopeSchedule.js). The old
+// estimateLow / estimateHigh fields are gone.
+//
+// The schedule is derived from these two durations plus the date the scope is
+// generated, so there are no start/end date fields either.
 const DEFAULT_INFO = {
   projectName: '', clientName: '', address: '', date: '',
   preparedBy:  'ClearPath Construction',
-  estimate: '', estimateLow: '', estimateHigh: '',
+  projectType: '',
+  estimate: '',
+  designWeeks:       CP_DEFAULT_DESIGN_WEEKS,
+  constructionWeeks: CP_DEFAULT_CONSTRUCTION_WEEKS,
   deposit: '$5,000', depositMemo: '',
 };
 
@@ -228,11 +345,15 @@ function App({ initialState, onChange, libraryData, saveStatus, onBack }) {
   // the name/client/address entered in the New Project dialog, and any field it
   // doesn't specify (preparedBy, deposit, …) still picks up its default.
   const [info, setInfo] = React.useState({ ...DEFAULT_INFO, ...(initialState?.info || {}) });
-  const [sections, setSections] = React.useState(
-    initialState?.sections ? backfillLibraryText(initialState.sections) : initSections(libraryData)
+  const [sections, setSections] = React.useState(() =>
+    initialState?.sections
+      ? backfillLibraryText(initialState.sections)
+      // New project: the type picked in the New Project dialog decides which
+      // sections start switched on.
+      : initSections(libraryData, initialState?.info?.projectType)
   );
   const [exclusions, setExclusions] = React.useState(initialState?.exclusions || initExclusions(libraryData));
-  const [allowances, setAllowances] = React.useState(initialState?.allowances || DEFAULT_ALLOWANCES);
+  const [allowances, setAllowances] = React.useState(() => mergeAllowances(initialState?.allowances, libraryData));
   const [addOns, setAddOns] = React.useState(initialState?.addOns || []);
   const [designDrawings, setDesignDrawings] = React.useState(initialState?.designDrawings || []);
   const [sideTab, setSideTab] = React.useState('sections');
@@ -256,6 +377,20 @@ function App({ initialState, onChange, libraryData, saveStatus, onBack }) {
 
   function updateSectionItems(id, items) {
     setSections(sects => sects.map(s => s.id === id ? { ...s, items } : s));
+  }
+
+  // Changing the project type after creation reloads the scope template, which
+  // throws away the current check marks — so confirm first. Custom lines and
+  // custom sections survive (see applyTemplate).
+  function changeProjectType(next) {
+    if (next === (info.projectType || '')) return;
+    const label = projectTypeLabel(next);
+    const warning = label
+      ? `Switch this project to the ${label} template?\n\nThe ${label} template decides which scope lines are checked, replacing your current selections. Lines and sections you added yourself are kept, as are allowances and project details.`
+      : 'Clear the project type?\n\nAll scope lines will be unchecked. Lines and sections you added yourself are kept.';
+    if (!window.confirm(warning)) return;
+    setInfo(i => ({ ...i, projectType: next }));
+    setSections(sects => applyTemplate(sects, libraryData, next));
   }
 
   function toggleAll(id) {
@@ -419,7 +554,7 @@ ${fontStyles}
       style:{ fontFamily:"'Figtree',sans-serif", fontSize:10, letterSpacing:'0.15em', textTransform:'uppercase', fontWeight:500, background:'transparent', color:'#EFECE8', border:'1px solid rgba(239,236,232,0.4)', padding:'6px 14px', cursor:'pointer' }
     }, 'Download .docx'),
     React.createElement('button', {
-      onClick: () => { if (confirm('Reset everything to a blank scope?')) { setSections(initSections(libraryData)); setExclusions(initExclusions(libraryData)); setInfo(DEFAULT_INFO); setAllowances(DEFAULT_ALLOWANCES); setAddOns([]); } },
+      onClick: () => { if (confirm('Reset everything to a blank scope?')) { setSections(initSections(libraryData, '')); setExclusions(initExclusions(libraryData)); setInfo(DEFAULT_INFO); setAllowances(initAllowances(libraryData)); setAddOns([]); } },
       style:{ fontFamily:"'Figtree',sans-serif", fontSize:10, letterSpacing:'0.15em', textTransform:'uppercase', fontWeight:400, background:'none', color:'rgba(239,236,232,0.4)', border:'1px solid rgba(239,236,232,0.2)', padding:'6px 12px', cursor:'pointer' }
     }, 'Reset')
   );
@@ -449,7 +584,7 @@ ${fontStyles}
       ),
       sideTab === 'info'
         ? React.createElement('div', { style:{flex:1,overflow:'auto'} },
-            React.createElement(ProjectInfo, { info, onChange: setInfo }),
+            React.createElement(ProjectInfo, { info, onChange: setInfo, onChangeType: changeProjectType }),
             React.createElement(AllowancesPanel, { allowances, onChange: setAllowances }),
             React.createElement(AddOnsPanel, { addOns, onChange: setAddOns }),
             React.createElement(DesignDrawingsPanel, { drawings: designDrawings, onChange: setDesignDrawings })

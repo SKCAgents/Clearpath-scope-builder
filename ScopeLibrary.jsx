@@ -263,7 +263,90 @@ const EXCLUSION_LIBRARY = [
 ];
 
 
+// ── Allowance categories ──────────────────────────────────────────────────────
+// The fixed allowance checklist. Every project shows all of these; the user
+// checks the ones that apply. Checked = included in the scope and printed in the
+// allowances section. Unchecked = explicitly excluded, and printed as excluded
+// rather than just left off the page.
+//
+// The amounts here are the DEFAULTS for a new project. They are editable per
+// project, and they are editable for all future projects in one place — the
+// "Allowance Defaults" card in the admin Master Template screen, which stores an
+// override in the library. This array is the fallback when no override is set.
+//
+// Where a default below is non-zero it was taken from an allowance figure
+// already written into SCOPE_LIBRARY above (plumbing fixtures, lighting,
+// appliances). The $0 entries are placeholders — set them once in the admin
+// screen and every new project picks them up.
+const ALLOWANCE_CATEGORIES = [
+  { id: 'doors_windows',        label: 'Doors & Windows',       amount: '$0' },
+  { id: 'millwork',             label: 'Millwork',              amount: '$0' },
+  { id: 'cabinets_countertops', label: 'Cabinets & Countertops', amount: '$0' },
+  { id: 'plumbing_fixtures',    label: 'Plumbing Fixtures',     amount: '$11,000' },
+  { id: 'lighting_fixtures',    label: 'Lighting Fixtures',     amount: '$2,000' },
+  { id: 'appliances',           label: 'Appliances',            amount: '$30,000' },
+  { id: 'tile',                 label: 'Tile',                  amount: '$0' },
+  { id: 'flooring',             label: 'Flooring',              amount: '$0' },
+  { id: 'paint',                label: 'Paint',                 amount: '$0' },
+  { id: 'mirrors',              label: 'Mirrors',               amount: '$0' },
+  { id: 'bath_hardware',        label: 'Bath Hardware',         amount: '$0' },
+];
+
+// The library row id that holds the admin override of the amounts above.
+// It lives in the same table as the scope sections (no schema change needed);
+// the double-underscore prefix marks it as a settings row so the section-merge
+// code skips it. See cpGetAllowanceDefaults / cpSaveAllowanceDefaults.
+const ALLOWANCE_DEFAULTS_ID = '__allowance_defaults';
+
+
+// ── Project type templates ────────────────────────────────────────────────────
+// The project type picked at creation determines which scope sections start
+// switched on. Sections listed here have their lines pre-checked; every other
+// section still appears in the builder, just with nothing checked, so anything
+// missing can still be added by hand.
+//
+// Within a template's sections, the master template's own pre-selections win
+// (the per-line checkboxes in the admin Master Template screen). A section with
+// no pre-selections set gets all of its lines checked.
+//
+// Section ids must match SCOPE_LIBRARY above, and each list is kept in
+// SCOPE_LIBRARY order so the printed document reads top-to-bottom naturally.
+const PROJECT_TEMPLATES = [
+  { id: 'kitchen', label: 'Kitchen', sections: ['preconstruction', 'site_prep', 'demolition', 'plumbing', 'electrical', 'drywall', 'trim', 'cabinetry', 'countertops', 'appliances', 'tile', 'flooring', 'painting', 'closeout'] },
+  { id: 'bath_master', label: 'Bath - Master', sections: ['preconstruction', 'site_prep', 'demolition', 'plumbing', 'electrical', 'hvac', 'drywall', 'trim', 'cabinetry', 'countertops', 'tile', 'painting', 'closeout'] },
+  { id: 'bath_secondary', label: 'Bath - Secondary', sections: ['preconstruction', 'site_prep', 'demolition', 'plumbing', 'electrical', 'drywall', 'trim', 'cabinetry', 'countertops', 'tile', 'painting', 'closeout'] },
+  { id: 'addition', label: 'Addition', sections: ['preconstruction', 'site_prep', 'demolition', 'earthwork', 'foundation', 'framing', 'exterior_finishes', 'insulation', 'plumbing', 'electrical', 'hvac', 'drywall', 'trim', 'cabinetry', 'countertops', 'flooring', 'painting', 'closeout'] },
+  { id: 'attic', label: 'Attic', sections: ['preconstruction', 'site_prep', 'demolition', 'framing', 'insulation', 'plumbing', 'electrical', 'hvac', 'drywall', 'trim', 'flooring', 'painting', 'closeout'] },
+  { id: 'garage', label: 'Garage', sections: ['preconstruction', 'site_prep', 'demolition', 'earthwork', 'foundation', 'framing', 'exterior_finishes', 'insulation', 'electrical', 'drywall', 'painting', 'closeout'] },
+  { id: 'porch_outdoor', label: 'Porch / Outdoor Living', sections: ['preconstruction', 'site_prep', 'demolition', 'earthwork', 'foundation', 'framing', 'exterior_finishes', 'electrical', 'fireplace', 'painting', 'closeout'] },
+  { id: 'poolhouse_adu', label: 'Poolhouse / ADU', sections: ['preconstruction', 'site_prep', 'earthwork', 'foundation', 'framing', 'exterior_finishes', 'insulation', 'plumbing', 'electrical', 'hvac', 'drywall', 'trim', 'cabinetry', 'countertops', 'appliances', 'tile', 'flooring', 'painting', 'closeout'] },
+  { id: 'basement', label: 'Basement', sections: ['preconstruction', 'site_prep', 'demolition', 'framing', 'insulation', 'plumbing', 'electrical', 'hvac', 'drywall', 'trim', 'cabinetry', 'countertops', 'tile', 'flooring', 'painting', 'closeout'] },
+  { id: 'conversion', label: 'Conversion', sections: ['preconstruction', 'site_prep', 'demolition', 'framing', 'exterior_finishes', 'insulation', 'plumbing', 'electrical', 'hvac', 'drywall', 'trim', 'cabinetry', 'countertops', 'tile', 'flooring', 'painting', 'closeout'] },
+  { id: 'whole_home', label: 'Whole Home Remodel', sections: ['preconstruction', 'site_prep', 'demolition', 'earthwork', 'foundation', 'framing', 'exterior_finishes', 'insulation', 'plumbing', 'electrical', 'hvac', 'drywall', 'trim', 'fireplace', 'cabinetry', 'countertops', 'appliances', 'tile', 'flooring', 'painting', 'closeout'] },
+  { id: 'laundry', label: 'Laundry', sections: ['preconstruction', 'site_prep', 'demolition', 'plumbing', 'electrical', 'hvac', 'drywall', 'trim', 'cabinetry', 'countertops', 'appliances', 'tile', 'painting', 'closeout'] },
+  { id: 'built_ins', label: 'Built-Ins', sections: ['preconstruction', 'site_prep', 'trim', 'cabinetry', 'painting', 'closeout'] },
+  { id: 'pool', label: 'Pool', sections: ['preconstruction', 'site_prep', 'earthwork', 'foundation', 'plumbing', 'electrical', 'closeout'] },
+  { id: 'exterior', label: 'Exterior', sections: ['preconstruction', 'site_prep', 'demolition', 'framing', 'exterior_finishes', 'painting', 'closeout'] },
+];
+
+// Look up a template by id. Returns null for '' / unknown, which means
+// "no template" — every section starts unchecked, the pre-template behaviour.
+function templateFor(typeId) {
+  return PROJECT_TEMPLATES.find(t => t.id === typeId) || null;
+}
+
+// Label for a type id, for display in the UI and the document.
+function projectTypeLabel(typeId) {
+  const t = templateFor(typeId);
+  return t ? t.label : '';
+}
+
+
 // ── Export ────────────────────────────────────────────────────────────────────
-// Make both libraries available to index.html via the window object.
+// Make the libraries available to index.html via the window object.
 // This is the browser-compatible equivalent of ES module exports.
-Object.assign(window, { SCOPE_LIBRARY, EXCLUSION_LIBRARY });
+Object.assign(window, {
+  SCOPE_LIBRARY, EXCLUSION_LIBRARY,
+  ALLOWANCE_CATEGORIES, ALLOWANCE_DEFAULTS_ID,
+  PROJECT_TEMPLATES, templateFor, projectTypeLabel,
+});

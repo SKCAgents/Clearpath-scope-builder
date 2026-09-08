@@ -215,26 +215,43 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
       sectionsContent.push(subheading(section.title));
       activeItems.forEach(item => sectionsContent.push(bullet(item.text)));
     });
+  }
 
-    // Allowances
-    if (allowances.length > 0) {
-      sectionsContent.push(subheading('Included Allowances'));
-      allowances.forEach(a => {
-        sectionsContent.push(shadedBox([
-          new Paragraph({
-            spacing: { after: 40 },
-            children: [
-              new TextRun({ text: money(a.amount) || '$ —', font: FONT_HEAD, size: 36, color: C_MAGNOLIA }),
-              new TextRun({ text: '   ' + (a.label || '').toUpperCase(), font: FONT_BODY, size: 18, color: C_SLATE, bold: true, characterSpacing: 30 }),
-            ],
-          }),
-          ...(a.desc ? [new Paragraph({
-            children: [new TextRun({ text: a.desc, font: FONT_BODY, size: 20, color: '666666' })],
-          })] : []),
-        ]));
-        sectionsContent.push(new Paragraph({ spacing: { after: 80 }, children: [] }));
-      });
-    }
+  // ── Allowances ───────────────────────────────────────────────────────────
+  // Deliberately OUTSIDE the inclusions block above: allowances are their own
+  // checkbox list and have to export even when no scope line is checked.
+  //
+  // `included !== false` rather than `included === true` — scopes saved by an
+  // earlier version of the app have no `included` field at all, and those
+  // entries were all included by definition. Only an explicit `false` (the
+  // user unchecking the box) excludes.
+  const includedAllowances = allowances.filter(a => a.included !== false);
+  const excludedAllowances = allowances.filter(a => a.included === false);
+
+  if (includedAllowances.length > 0) {
+    sectionsContent.push(subheading('Included Allowances'));
+    includedAllowances.forEach(a => {
+      sectionsContent.push(shadedBox([
+        new Paragraph({
+          spacing: { after: 40 },
+          children: [
+            new TextRun({ text: money(a.amount) || '$ —', font: FONT_HEAD, size: 36, color: C_MAGNOLIA }),
+            new TextRun({ text: '   ' + (a.label || '').toUpperCase(), font: FONT_BODY, size: 18, color: C_SLATE, bold: true, characterSpacing: 30 }),
+          ],
+        }),
+        ...(a.desc ? [new Paragraph({
+          children: [new TextRun({ text: a.desc, font: FONT_BODY, size: 20, color: '666666' })],
+        })] : []),
+      ]));
+      sectionsContent.push(new Paragraph({ spacing: { after: 80 }, children: [] }));
+    });
+  }
+
+  // Unchecked allowances are called out by name — silence would read as "not
+  // priced yet" rather than "not in this scope".
+  if (excludedAllowances.length > 0) {
+    sectionsContent.push(subheading('Excluded from Allowances'));
+    sectionsContent.push(bullet(`The following carry no allowance and are excluded from this scope: ${excludedAllowances.map(a => a.label).join(', ')}.`));
   }
 
   // ── Exclusions ───────────────────────────────────────────────────────────
@@ -245,32 +262,33 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
   }
 
   // ── Estimate ─────────────────────────────────────────────────────────────
-  if (info.estimate) {
+  // One price is entered; the document only ever shows the derived ±10% band.
+  // The raw midpoint must not reach the page, so `info.estimate` is passed
+  // straight to cpPriceRange() and never printed. A null range (blank or
+  // non-numeric price) drops the section entirely.
+  const range = window.cpPriceRange(info.estimate);
+  if (range) {
     sectionsContent.push(sectionHeading('Preliminary Estimate'));
     sectionsContent.push(shadedBox([
       new Paragraph({
         spacing: { after: 80 },
         children: [new TextRun({
-          text: 'PRELIMINARY ESTIMATED TOTAL',
+          text: 'PRELIMINARY BUDGETARY RANGE',
           font: FONT_BODY, size: 18, color: C_LIMESTONE, bold: true, characterSpacing: 60,
         })],
       }),
       new Paragraph({
         spacing: { after: 80 },
         children: [new TextRun({
-          text: money(info.estimate), font: FONT_HEAD, size: 72, color: C_SLATE,
+          // 44 half-points, not the 72 a single figure used to get: the range
+          // string is roughly twice as long and wraps inside the shaded box at
+          // display size.
+          text: money(range.rangeLabel), font: FONT_HEAD, size: 44, color: C_SLATE,
         })],
       }),
-      ...(info.estimateLow && info.estimateHigh ? [new Paragraph({
-        spacing: { after: 60 },
-        children: [new TextRun({
-          text: `Range: ${money(info.estimateLow)} — ${money(info.estimateHigh)}  (±5%)`,
-          font: FONT_BODY, size: 22, color: '555555',
-        })],
-      })] : []),
       new Paragraph({
         children: [new TextRun({
-          text: 'Final price determined after final scope and selections are made.',
+          text: window.CP_RANGE_DISCLAIMER,
           font: FONT_BODY, size: 20, color: '888888', italics: true,
         })],
       }),
@@ -304,81 +322,115 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
   }
 
   // ── Schedule ─────────────────────────────────────────────────────────────
-  if (info.startDate || info.endDate || info.duration || info.scheduleNotes) {
+  // The four dates are derived, not typed, so the section always renders — see
+  // ScopeSchedule.js for the arithmetic and the holiday rule.
+  {
+    const sched = window.cpComputeSchedule(info);
     sectionsContent.push(sectionHeading('Schedule'));
 
-    const scheduleFields = [
-      ['Estimated Start', info.startDate],
-      ['Estimated Completion', info.endDate],
-      ['Total Duration', info.duration],
-    ].filter(([_, v]) => v);
+    const GAP = 240;   // blank spacer column between cards
+
+    // Two cards per row, not four across.
+    //
+    // The old layout put every field in one row and derived the card width from
+    // the field count. At four across that leaves ~2200 twips per card, and the
+    // Cormorant date values ("September 8, 2026") wrap onto a second line. Two
+    // per row keeps the same card width the three-field layout used to produce
+    // minus one field, which the dates fit on a single line.
+    const n = 2;
+    const cardW = Math.floor((CONTENT_W - GAP * (n - 1)) / n);
+    const columnWidths = [cardW, GAP, cardW];
+
+    const noBorder = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' };
 
     // Side-by-side shaded cards, matching the preview/PDF layout.
     //
     // These used to be single paragraphs of `LABEL \t value` with a RIGHT tab
     // stop. That tab stop does not survive a round-trip through Google Docs —
     // the stop is dropped, the tab collapses, and the row renders as
-    // "TOTAL DURATION4 - 6 weeks" with no gap. Putting the label and value in
-    // separate paragraphs inside a table cell removes the tab entirely, so the
-    // spacing holds up in Word, Google Docs, and LibreOffice alike.
-    if (scheduleFields.length) {
-      const n = scheduleFields.length;
-      const GAP = 240;                                   // blank spacer column between cards
-      const cardW = Math.floor((CONTENT_W - GAP * (n - 1)) / n);
+    // "DESIGN COMPLETESeptember 8, 2026" with no gap. Putting the label and
+    // value in separate paragraphs inside a table cell removes the tab
+    // entirely, so the spacing holds up in Word, Google Docs, and LibreOffice
+    // alike. Do not reintroduce tab stops here.
+    const cardCell = (label, value) => new TableCell({
+      width: { size: cardW, type: WidthType.DXA },
+      shading: { type: ShadingType.SOLID, color: C_BG_LIGHT, fill: C_BG_LIGHT },
+      borders: {
+        top: noBorder, bottom: noBorder, right: noBorder,
+        left: { style: BorderStyle.SINGLE, size: 18, color: C_MAGNOLIA },
+      },
+      margins: { top: 180, bottom: 180, left: 200, right: 160 },
+      children: [
+        new Paragraph({
+          spacing: { after: 80, line: 240 },
+          children: [new TextRun({
+            text: label.toUpperCase(),
+            font: FONT_BODY, size: 18, color: C_GOLD_DARK, bold: true, characterSpacing: 36,
+          })],
+        }),
+        new Paragraph({
+          spacing: { after: 0, line: 260 },
+          children: [new TextRun({ text: value, font: FONT_HEAD, size: 28, color: C_SLATE })],
+        }),
+      ],
+    });
 
-      // Column grid alternates card / spacer / card / spacer / card
-      const columnWidths = [];
-      scheduleFields.forEach((_, i) => {
-        if (i > 0) columnWidths.push(GAP);
-        columnWidths.push(cardW);
-      });
+    // Spacer cell — unshaded, no borders, creates the gutter between the cards
+    const spacerCell = () => new TableCell({
+      width: { size: GAP, type: WidthType.DXA },
+      borders: { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder },
+      margins: { top: 0, bottom: 0, left: 0, right: 0 },
+      children: [new Paragraph({ children: [] })],
+    });
 
-      const noBorder = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' };
-      const cells = [];
-      scheduleFields.forEach(([label, value], i) => {
-        if (i > 0) {
-          // Spacer cell — unshaded, no borders, creates the gutter between cards
-          cells.push(new TableCell({
-            width: { size: GAP, type: WidthType.DXA },
-            borders: { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder },
-            margins: { top: 0, bottom: 0, left: 0, right: 0 },
-            children: [new Paragraph({ children: [] })],
-          }));
-        }
-        cells.push(new TableCell({
-          width: { size: cardW, type: WidthType.DXA },
-          shading: { type: ShadingType.SOLID, color: C_BG_LIGHT, fill: C_BG_LIGHT },
-          borders: {
-            top: noBorder, bottom: noBorder, right: noBorder,
-            left: { style: BorderStyle.SINGLE, size: 18, color: C_MAGNOLIA },
-          },
-          margins: { top: 180, bottom: 180, left: 200, right: 160 },
-          children: [
-            new Paragraph({
-              spacing: { after: 80, line: 240 },
-              children: [new TextRun({
-                text: label.toUpperCase(),
-                font: FONT_BODY, size: 18, color: C_GOLD_DARK, bold: true, characterSpacing: 36,
-              })],
-            }),
-            new Paragraph({
-              spacing: { after: 0, line: 260 },
-              children: [new TextRun({ text: value, font: FONT_HEAD, size: 28, color: C_SLATE })],
-            }),
-          ],
-        }));
-      });
+    const cardRow = (a, b) => new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      columnWidths,
+      borders: {
+        top: noBorder, bottom: noBorder, left: noBorder, right: noBorder,
+        insideHorizontal: noBorder, insideVertical: noBorder,
+      },
+      rows: [new TableRow({
+        children: [cardCell(a[0], a[1]), spacerCell(), cardCell(b[0], b[1])],
+      })],
+    });
 
-      sectionsContent.push(new Table({
-        width: { size: 100, type: WidthType.PERCENTAGE },
-        columnWidths,
-        borders: {
-          top: noBorder, bottom: noBorder, left: noBorder, right: noBorder,
-          insideHorizontal: noBorder, insideVertical: noBorder,
-        },
-        rows: [new TableRow({ children: cells })],
-      }));
+    sectionsContent.push(cardRow(
+      ['Design Start', window.cpFormatDate(sched.designStart)],
+      ['Design Complete', window.cpFormatDate(sched.designComplete)],
+    ));
+    // Two separate one-row tables, so a spacer paragraph is needed between them
+    // — consecutive tables with no paragraph between them collide visually (and
+    // Word will merge them outright).
+    sectionsContent.push(new Paragraph({ spacing: { after: 120 }, children: [] }));
+    sectionsContent.push(cardRow(
+      ['Construction Start', window.cpFormatDate(sched.constructionStart)],
+      ['Construction Complete', window.cpFormatDate(sched.constructionComplete)],
+    ));
+
+    // Effective weeks — holiday extensions included, so these can exceed the
+    // durations that were entered.
+    sectionsContent.push(p(
+      `Design ${sched.designWeeksEffective} weeks · Construction ${sched.constructionWeeksEffective} weeks · Total ${sched.totalWeeksEffective} weeks`,
+      { before: 200 },
+    ));
+
+    // A holiday landing in both phases would otherwise be named twice.
+    const holidays = [...new Set([...sched.designHolidays, ...sched.constructionHolidays])];
+    if (holidays.length) {
+      sectionsContent.push(p(
+        `Includes one additional week for ${window.cpJoinNames(holidays)}.`,
+        { italics: true, color: '666666' },
+      ));
     }
+
+    // The dates are computed from today, so a scope re-exported next month
+    // reads differently. Say so rather than let the client assume the dates
+    // were committed to.
+    sectionsContent.push(p(
+      `Dates are calculated from ${window.cpFormatDate(sched.designStart)}. Regenerating this scope on a later date will shift the schedule.`,
+      { italics: true, color: '666666' },
+    ));
 
     if (info.scheduleNotes) {
       sectionsContent.push(p(info.scheduleNotes, { before: 200 }));

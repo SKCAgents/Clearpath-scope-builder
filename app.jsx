@@ -164,8 +164,11 @@ function NewProjectModal({ onClose, onCreate, existingProjects = [] }) {
     // Otherwise: seed the project's scope data so the build view's Project tab is
     // pre-filled from what was entered here — no need to re-type name/client/
     // address. App merges this over DEFAULT_INFO, so other defaults still apply.
+    // When copying, the project type is inherited from the source along with
+    // its scope — the dropdown is hidden in that case, and project_type is left
+    // out of the payload so cpCopyProject falls back to the source's value.
     const { data, error } = copyFrom
-      ? await cpCopyProject(copyFrom, fields)
+      ? await cpCopyProject(copyFrom, { name: fields.name, client_name: fields.client_name, address: fields.address })
       : await cpCreateProject({
           ...fields,
           data: {
@@ -173,6 +176,10 @@ function NewProjectModal({ onClose, onCreate, existingProjects = [] }) {
               projectName: fields.name,
               clientName:  fields.client_name,
               address:     fields.address,
+              // The type drives which scope template the editor loads on first
+              // open (see initSections), so it has to live in the data blob too,
+              // not just in the project_type column.
+              projectType: fields.project_type,
               // Prepared date defaults to the current month + year (e.g. "June 2026").
               // Editable later in the Project tab; frozen at creation so it doesn't drift.
               date:        new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
@@ -225,22 +232,24 @@ function NewProjectModal({ onClose, onCreate, existingProjects = [] }) {
             <label style={labelStyle}>Address</label>
             <input value={fields.address} onChange={set('address')} style={inputStyle} />
           </div>
-          <div style={{ marginBottom: 28 }}>
-            <label style={labelStyle}>Project Type</label>
-            <select value={fields.project_type} onChange={set('project_type')} style={{ ...inputStyle, cursor: 'pointer' }}>
-              <option value="">— Select —</option>
-              <option value="kitchen">Kitchen</option>
-              <option value="master_bath">Master Bath</option>
-              <option value="new_garage">New Garage</option>
-              <option value="attic">Attic</option>
-              <option value="interior_reno">Interior Reno</option>
-              <option value="addition">Addition</option>
-              <option value="pool">Pool</option>
-              <option value="pool_house">Pool House</option>
-              <option value="large_scale_renovation">Large Scale Renovation</option>
-              <option value="other">Other</option>
-            </select>
-          </div>
+          {/* Project type selects the scope template the new project starts
+              from (PROJECT_TEMPLATES in ScopeLibrary.jsx) — the sections it
+              lists start with their lines checked. Hidden when copying an
+              existing project, which brings its own scope and its own type. */}
+          {!copyFrom && (
+            <div style={{ marginBottom: 28 }}>
+              <label style={labelStyle}>Project Type</label>
+              <select value={fields.project_type} onChange={set('project_type')} style={{ ...inputStyle, cursor: 'pointer' }}>
+                <option value="">— No template (start blank) —</option>
+                {(window.PROJECT_TEMPLATES || []).map(t => (
+                  <option key={t.id} value={t.id}>{t.label}</option>
+                ))}
+              </select>
+              <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, lineHeight: 1.5, color: C.goldDark, marginTop: 8 }}>
+                Loads that type's scope template. You can change it later, which reloads the template.
+              </div>
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
             <button type="button" onClick={onClose} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', background: 'none', color: C.goldDark, border: `1px solid ${C.border}`, padding: '9px 18px', cursor: 'pointer' }}>Cancel</button>
             <button type="submit" disabled={saving} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', background: C.slate, color: C.offwhite, border: 'none', padding: '9px 20px', cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>
@@ -293,7 +302,9 @@ function ProjectList({ onOpen, onOpenLibrary, currentEmail }) {
 
   // Apply search filter and sort in one pass. No network calls — all client-side.
   const filtered = (projects || [])
-    .filter(p => !search || [p.name, p.client_name, p.address, p.project_type]
+    // project_type holds a template id ('bath_master'); search against its
+    // human label too, so typing "Bath" finds it.
+    .filter(p => !search || [p.name, p.client_name, p.address, p.project_type, projectTypeLabel(p.project_type)]
       .some(f => f?.toLowerCase().includes(search.toLowerCase())))
     .sort((a, b) => {
       if (sort === 'updated_at') return new Date(b.updated_at) - new Date(a.updated_at);
@@ -470,6 +481,8 @@ function ProjectEditor({ projectId, onBack }) {
       name: state.info?.projectName || project.name,      // Keep the list view in sync
       client_name: state.info?.clientName || null,
       address: state.info?.address || null,
+      // Mirrors info.projectType so the project list can show and filter by it
+      project_type: state.info?.projectType || null,
     };
     pendingRef.current = fields;   // Store in case the tab closes before the timer fires
     setSaveStatus('pending');
@@ -530,7 +543,11 @@ function ProjectEditor({ projectId, onBack }) {
 // library. Mirrors the merge rule in index.html's initSections, but without the
 // per-project "included" flag — here we only care about content and order.
 function buildTemplateView(libraryData) {
-  const dbSections = libraryData?.sections || [];
+  // Rows whose id starts with '__' are settings rows sharing the
+  // library_sections table (currently just the allowance defaults). They are
+  // not scope sections, so they must not become editable section cards — and
+  // must not be swept into cpReorderSections' payload either.
+  const dbSections = (libraryData?.sections || []).filter(s => !String(s.id).startsWith('__'));
   const dbById = {};
   dbSections.forEach(s => { dbById[s.id] = s; });
 
@@ -581,7 +598,20 @@ function buildTemplateView(libraryData) {
     ? libraryData.exclusions.map(e => e.text)
     : [...(window.EXCLUSION_LIBRARY || [])];
 
-  return { sections, exclusions };
+  // Allowance defaults: the admin-set amounts from the library, laid over the
+  // hardcoded ALLOWANCE_CATEGORIES so the card always shows every category in
+  // its canonical order even if the saved row is missing one.
+  const saved = typeof window.cpParseAllowanceDefaults === 'function'
+    ? window.cpParseAllowanceDefaults(libraryData)
+    : null;
+  const savedById = {}, savedByLabel = {};
+  (saved || []).forEach(a => { if (a.id) savedById[a.id] = a; savedByLabel[a.label] = a; });
+  const allowanceDefaults = (window.ALLOWANCE_CATEGORIES || []).map(c => {
+    const hit = savedById[c.id] || savedByLabel[c.label];
+    return { id: c.id, label: c.label, amount: hit ? hit.amount : c.amount };
+  });
+
+  return { sections, exclusions, allowanceDefaults, hasAllowanceOverride: !!saved };
 }
 
 // One editable section card. Holds its own draft state so typing doesn't
@@ -784,6 +814,70 @@ function TemplateExclusions({ initial }) {
   );
 }
 
+// The one place allowance amounts are configured. Editing here changes the
+// defaults for every NEW project; projects that already exist keep the amounts
+// saved in their own data, so a quote that's out with a client never moves.
+//
+// The category list itself is fixed in code (ALLOWANCE_CATEGORIES in
+// ScopeLibrary.jsx) — only the amounts are editable, which is what keeps the
+// wording identical across every scope document.
+function TemplateAllowanceDefaults({ initial, hasOverride }) {
+  const [rows, setRows] = React.useState(initial);
+  const [saving, setSaving] = React.useState(false);
+  const [saved, setSaved] = React.useState(false);
+  const [open, setOpen] = React.useState(false);
+
+  function setAmount(i, amount) {
+    setRows(a => a.map((r, j) => j === i ? { ...r, amount } : r));
+    setSaved(false);
+  }
+
+  async function save() {
+    setSaving(true);
+    const { error } = await cpSaveAllowanceDefaults(rows);
+    setSaving(false);
+    if (error) { alert('Failed to save allowance defaults: ' + error.message); return; }
+    setSaved(true);
+  }
+
+  return (
+    <div style={{ background: 'white', border: `1px solid ${C.border}`, borderLeft: `3px solid ${C.gold}`, marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', cursor: 'pointer', background: open ? C.bgLight : 'white' }} onClick={() => setOpen(o => !o)}>
+        <span style={{ color: C.goldDark, fontSize: 12, width: 12 }}>{open ? '▾' : '▸'}</span>
+        <span style={{ flex: 1, fontFamily: "'Figtree', sans-serif", fontWeight: 500, fontSize: 12, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.slate }}>Allowance Defaults</span>
+        <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, color: C.goldDark }}>{rows.length} categories</span>
+        <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 8, letterSpacing: '0.12em', textTransform: 'uppercase', color: hasOverride ? C.magnolia : C.gold }}>
+          {hasOverride ? 'Customized' : 'Built-in'}
+        </span>
+      </div>
+      {open && (
+        <div style={{ padding: '8px 12px 12px', borderTop: `1px solid ${C.border}` }} onClick={e => e.stopPropagation()}>
+          <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, lineHeight: 1.6, color: C.goldDark, marginBottom: 10, fontStyle: 'italic' }}>
+            Starting amounts for new projects. Every project can still override them, and all categories start unchecked.
+          </div>
+          {rows.map((r, i) => (
+            <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+              <span style={{ flex: 1, fontFamily: "'Figtree', sans-serif", fontSize: 12, color: C.slate }}>{r.label}</span>
+              <input
+                value={r.amount || ''}
+                placeholder="$0"
+                onChange={e => setAmount(i, e.target.value)}
+                style={{ width: 110, fontFamily: "'Figtree', sans-serif", fontSize: 12, border: `1px solid ${C.border}`, padding: '5px 8px', color: C.magnolia, fontWeight: 500, textAlign: 'right', outline: 'none', background: 'white' }}
+              />
+            </div>
+          ))}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, marginTop: 14, paddingTop: 10, borderTop: `1px dashed ${C.border}` }}>
+            {saved && <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, color: C.magnolia }}>Saved ✓</span>}
+            <button onClick={save} disabled={saving} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', fontWeight: 500, background: C.magnolia, color: 'white', border: 'none', padding: '7px 16px', cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>
+              {saving ? 'Saving…' : 'Save Defaults'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // The Master Template editor screen. Loads the library, builds the editable
 // template view, and renders a card per section plus the exclusions editor.
 function LibraryEditor({ onBack }) {
@@ -796,7 +890,7 @@ function LibraryEditor({ onBack }) {
       if (typeof window.cpListLibrary !== 'function') { setTimeout(tryLoad, 100); return; }
       cpListLibrary()
         .then(lib => { if (!cancelled) setTemplate(buildTemplateView(lib)); })
-        .catch(() => { if (!cancelled) setTemplate({ sections: [], exclusions: [] }); });
+        .catch(() => { if (!cancelled) setTemplate(buildTemplateView(null)); });
     }
     tryLoad();
     return () => { cancelled = true; };
@@ -886,6 +980,8 @@ function LibraryEditor({ onBack }) {
               ))}
 
               <TemplateExclusions initial={template.exclusions} />
+
+              <TemplateAllowanceDefaults initial={template.allowanceDefaults} hasOverride={template.hasAllowanceOverride} />
 
               {/* Add new section */}
               <div style={{ display: 'flex', gap: 8, marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>

@@ -364,6 +364,81 @@ window.cpDeleteLibrarySection = async function (sectionId) {
   return { error };
 };
 
+
+// ── Allowance defaults ────────────────────────────────────────────────────────
+// The allowance checklist (Doors & Windows, Millwork, …) carries a default
+// dollar amount per category. Those defaults are set once, by an admin, and
+// apply to every NEW project; existing projects keep the amounts saved in their
+// own data.
+//
+// There is no settings table in this database, and adding one would mean a
+// migration run by hand in the Supabase dashboard. Instead the defaults live in
+// a single row of library_sections — the table that already exists for exactly
+// this kind of shared, admin-edited, everyone-can-read content.
+//
+// The row is identified by ALLOWANCE_DEFAULTS_ID ('__allowance_defaults'). The
+// leading double underscore marks it as a settings row rather than a scope
+// section: initSections (index.html) and buildTemplateView (app.jsx) both skip
+// ids starting with '__', so it never shows up as an accordion in the editor or
+// as a card in the Master Template screen.
+//
+// Encoding: one JSON string per category in the existing items text[] column.
+// One malformed entry can then be skipped without losing the rest.
+
+const ALLOWANCE_ROW_ID = window.ALLOWANCE_DEFAULTS_ID || '__allowance_defaults';
+
+// Pulls the admin-set defaults out of an already-fetched cpListLibrary() result.
+// No network call — the caller has the library in hand.
+// Returns null when no override row exists, which means "use the hardcoded
+// ALLOWANCE_CATEGORIES amounts from ScopeLibrary.jsx".
+window.cpParseAllowanceDefaults = function (libraryData) {
+  const row = (libraryData?.sections || []).find(s => s.id === ALLOWANCE_ROW_ID);
+  if (!row) return null;
+
+  const parsed = (row.items || []).map(raw => {
+    try {
+      const obj = JSON.parse(raw);
+      // Require at least a label — an entry with no label can't be matched to a
+      // category or shown in the UI.
+      return obj && obj.label ? { id: obj.id || '', label: obj.label, amount: obj.amount || '$0' } : null;
+    } catch {
+      return null;   // skip a corrupt entry, keep the rest
+    }
+  }).filter(Boolean);
+
+  return parsed.length ? parsed : null;
+};
+
+// Writes the admin-set defaults. Replaces the whole list in one row.
+// list: [{ id, label, amount }] in display order.
+// Admin-only via RLS on library_sections (and gated by isAdmin() in the UI).
+window.cpSaveAllowanceDefaults = async function (list) {
+  const items = (list || [])
+    .filter(a => a && a.label)
+    .map(a => JSON.stringify({ id: a.id || '', label: a.label, amount: a.amount || '$0' }));
+
+  const { data: existing } = await _sb
+    .from('library_sections')
+    .select('id')
+    .eq('id', ALLOWANCE_ROW_ID)
+    .maybeSingle();
+
+  if (existing) {
+    const { error } = await _sb
+      .from('library_sections')
+      .update({ title: 'Allowance Defaults', items })
+      .eq('id', ALLOWANCE_ROW_ID);
+    return { error };
+  }
+
+  // sort_order 9999 keeps the settings row out of the way of the real sections
+  // in any query that happens to order by it.
+  const { error } = await _sb
+    .from('library_sections')
+    .insert({ id: ALLOWANCE_ROW_ID, title: 'Allowance Defaults', items, included_items: [], sort_order: 9999 });
+  return { error };
+};
+
 // Persists a custom order for the whole section list (from the Master Template
 // editor's up/down controls). Writes a clean sequential sort_order — 0, 1, 2, …
 // — matching the given order, so the entire library sorts by sort_order from

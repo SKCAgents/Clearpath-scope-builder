@@ -535,7 +535,7 @@ const AUTO_DEPOSITS = ['', '$5,000', ...DEPOSIT_TIERS];
 // The left sidebar form where the user fills in project details — name, client,
 // address, dates, description, estimate, and deposit info. All fields feed into
 // the printed scope document via the ScopeDocument component.
-function ProjectInfo({ info, onChange }) {
+function ProjectInfo({ info, onChange, onChangeType }) {
   // Returns a rendered text input field with a label above it. Pass onInput to
   // override what a keystroke does (the Total Estimate field uses this to fill
   // in the deposit at the same time).
@@ -574,11 +574,42 @@ function ProjectInfo({ info, onChange }) {
       })
     );
 
+  // Small note under a field — used to show what the document will actually
+  // print for the derived values (price range, schedule dates).
+  const note = (text, italic = true) =>
+    React.createElement('div', {
+      style: { fontFamily: "'Figtree', sans-serif", fontSize: 10, lineHeight: 1.5, color: C.goldDark, marginTop: -8, marginBottom: 14, fontStyle: italic ? 'italic' : 'normal' },
+    }, text);
+
+  // Whole-week duration input. Blank falls back to the default at render time
+  // (see cpWeeks), so clearing the box doesn't produce a broken schedule.
+  const weeksField = (label, key, fallback) =>
+    React.createElement('div', { style: { marginBottom: 14 } },
+      React.createElement('label', {
+        style: { display: 'block', fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.15em', textTransform: 'uppercase', color: C.goldDark, marginBottom: 4, fontWeight: 500 },
+      }, label),
+      React.createElement('div', { style: { display: 'flex', alignItems: 'baseline', gap: 8 } },
+        React.createElement('input', {
+          type: 'number', min: 1, step: 1,
+          value: info[key] === undefined || info[key] === null ? fallback : info[key],
+          onChange: e => onChange({ ...info, [key]: e.target.value }),
+          style: { width: 72, fontFamily: "'Figtree', sans-serif", fontSize: 14, color: C.slate, border: 'none', borderBottom: `1px solid ${C.border}`, padding: '8px 0', background: 'transparent', outline: 'none' },
+        }),
+        React.createElement('span', { style: { fontFamily: "'Figtree', sans-serif", fontSize: 11, color: C.goldDark } }, 'weeks')
+      )
+    );
+
   // Returns a small uppercase section label (used as a visual divider within the form)
   const sectionHeader = text =>
     React.createElement('div', {
       style: { fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.15em', textTransform: 'uppercase', color: C.goldDark, marginBottom: 12, marginTop: 20, fontWeight: 500 },
     }, text);
+
+  // What the document will print. Both are derived, not typed — the price is
+  // shown as a ±10% range and the schedule is counted forward from today.
+  const range = window.cpPriceRange(info.estimate);
+  const sched = window.cpComputeSchedule(info);
+  const holidays = [...new Set([...(sched.designHolidays || []), ...(sched.constructionHolidays || [])])];
 
   return React.createElement('div', { style: { padding: 16 } },
     field('Project Name',    'projectName', 'e.g. Walter Addition'),
@@ -587,25 +618,63 @@ function ProjectInfo({ info, onChange }) {
     field('Prepared Date',   'date',        'e.g. April 2026'),
     field('Prepared By',     'preparedBy',  'e.g. ClearPath Construction'),
 
+    // Project type — switching it reloads the scope template, so this goes
+    // through onChangeType (which confirms first) rather than plain onChange.
+    React.createElement('div', { style: { marginBottom: 14 } },
+      React.createElement('label', {
+        style: { display: 'block', fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.15em', textTransform: 'uppercase', color: C.goldDark, marginBottom: 4, fontWeight: 500 },
+      }, 'Project Type'),
+      React.createElement('select', {
+        value: info.projectType || '',
+        onChange: e => (onChangeType ? onChangeType(e.target.value) : onChange({ ...info, projectType: e.target.value })),
+        style: { width: '100%', fontFamily: "'Figtree', sans-serif", fontSize: 14, color: C.slate, border: 'none', borderBottom: `1px solid ${C.border}`, padding: '8px 0', background: 'transparent', outline: 'none', cursor: 'pointer' },
+      },
+        React.createElement('option', { value: '' }, '— No template —'),
+        ...(window.PROJECT_TEMPLATES || []).map(t =>
+          React.createElement('option', { key: t.id, value: t.id }, t.label)
+        )
+      ),
+      note('Changing this reloads the scope template and replaces which lines are checked.')
+    ),
+
     React.createElement('div', { style: { marginTop: 20, paddingTop: 16, borderTop: `1px solid ${C.border}` } },
       sectionHeader('Project Description'),
       textarea('Description', 'description', "A brief overview of the project — what we're building, key features, and goals…", 15),
 
-      sectionHeader('Preliminary Estimate'),
-      field('Total Estimate', 'estimate',     '$997,972', 'text', onEstimateChange),
-      field('Low Range',      'estimateLow',  '$948,000'),
-      field('High Range',     'estimateHigh', '$1,048,000'),
+      sectionHeader('Preliminary Price'),
+      field('Price', 'estimate', '$997,972', 'text', onEstimateChange),
+      note(range
+        ? `Prints as ${range.rangeLabel} — this figure itself is never shown.`
+        : 'Enter one price. The document prints it as a ±10% budgetary range.'),
 
       sectionHeader('Design Deposit'),
       React.createElement('div', { style: { fontFamily: "'Figtree', sans-serif", fontSize: 10, color: C.goldDark, marginTop: -6, marginBottom: 12, fontStyle: 'italic' } },
-        'Set from the estimate — type over it to use a different amount'),
+        'Set from the price — type over it to use a different amount'),
       field('Deposit Amount', 'deposit',     '$15,000'),
       field('Deposit Memo',   'depositMemo', 'e.g. Walter Addition Design Fee'),
 
       sectionHeader('Schedule'),
-      field('Estimated Start',      'startDate',     'e.g. June 2026'),
-      field('Estimated Completion', 'endDate',        'e.g. February 2027'),
-      field('Total Duration',       'duration',       'e.g. 8 months'),
+      weeksField('Design Duration',       'designWeeks',       CP_DEFAULT_DESIGN_WEEKS),
+      weeksField('Construction Duration', 'constructionWeeks', CP_DEFAULT_CONSTRUCTION_WEEKS),
+      // Read-only preview of the dates the document will print. Recomputed on
+      // every render, so it always matches what an export made right now says.
+      React.createElement('div', { style: { background: C.bgLight, borderLeft: `3px solid ${C.magnolia}`, padding: '10px 12px', marginBottom: 14 } },
+        ...[
+          ['Design Start',          window.cpFormatDate(sched.designStart)],
+          ['Design Complete',       window.cpFormatDate(sched.designComplete)],
+          ['Construction Start',    window.cpFormatDate(sched.constructionStart)],
+          ['Construction Complete', window.cpFormatDate(sched.constructionComplete)],
+        ].map(([label, value]) =>
+          React.createElement('div', { key: label, style: { display: 'flex', justifyContent: 'space-between', gap: 10, marginBottom: 4 } },
+            React.createElement('span', { style: { fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.goldDark } }, label),
+            React.createElement('span', { style: { fontFamily: "'Figtree', sans-serif", fontSize: 11, color: C.slate, fontWeight: 500 } }, value)
+          )
+        ),
+        React.createElement('div', { style: { fontFamily: "'Figtree', sans-serif", fontSize: 9, lineHeight: 1.5, color: C.goldDark, marginTop: 8, fontStyle: 'italic' } },
+          holidays.length
+            ? `Counted from today. Includes an extra week for ${window.cpJoinNames(holidays)}.`
+            : 'Counted from today — exporting on a later date shifts these dates.')
+      ),
       textarea('Schedule Notes',    'scheduleNotes',  'Optional notes on phasing, milestones, or scheduling considerations…', 3),
     )
   );
@@ -656,38 +725,88 @@ function AddOnsPanel({ addOns, onChange }) {
 }
 
 
-// ── AllowancesPanel ───────────────────────────────────────────────────────────
-// Editable line items for dollar allowances included in the estimate.
-// Allowances cover items where the exact cost depends on client selections —
-// for example "Plumbing Fixtures — $20,000" means the client has that budget
-// to select their own fixtures within the project.
+// ── AllowancesPanel ───────────────────────────────────────────────────
+// The allowance checklist. Categories are fixed (ALLOWANCE_CATEGORIES in
+// ScopeLibrary.jsx) rather than typed in, so the same wording appears on every
+// scope and nothing gets left off by accident.
+//
+// Checked   → included in the scope and printed under "Included Allowances"
+//             with its dollar amount.
+// Unchecked → printed under "Excluded from Allowances". This is the point of a
+//             fixed list: an allowance the client doesn't get is stated as
+//             excluded rather than silently missing from the page.
+//
+// Amounts start from the defaults (admin-set in the Master Template screen, or
+// the hardcoded fallback) and are editable per project.
+//
+// Rows that aren't one of the fixed categories are allowances typed by hand in
+// an older version of the app. They still render, and they keep a remove
+// button, so no existing quote loses a number.
 function AllowancesPanel({ allowances, onChange }) {
+  const fixedIds = new Set((window.ALLOWANCE_CATEGORIES || []).map(c => c.id));
+
+  const patch = (i, next) => onChange(allowances.map((a, j) => j === i ? { ...a, ...next } : a));
+
+  const includedCount = allowances.filter(a => a.included !== false).length;
+
+  // Same 16px square as the scope-line checkbox in LineItem, so a check means
+  // the same thing everywhere in the editor.
+  const checkbox = (on, onClick) =>
+    React.createElement('button', {
+      onClick,
+      title: on ? 'Included — click to exclude' : 'Excluded — click to include',
+      style: {
+        width: 16, height: 16, flexShrink: 0,
+        border: `1.5px solid ${on ? C.magnolia : C.goldDark}`,
+        background: on ? C.magnolia : 'transparent',
+        cursor: 'pointer',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        transition: 'all 0.15s',
+      },
+    },
+      on && React.createElement('svg', { width: 10, height: 10, viewBox: '0 0 10 10', fill: 'none' },
+        React.createElement('polyline', { points: '1.5,5 4,7.5 8.5,2', stroke: 'white', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' })
+      )
+    );
+
   return React.createElement('div', { style: { padding: 16, borderTop: `1px solid ${C.border}` } },
-    React.createElement('div', { style: { fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.15em', textTransform: 'uppercase', color: C.goldDark, marginBottom: 12, fontWeight: 500 } }, 'Allowances'),
-    allowances.map((a, i) =>
-      React.createElement('div', { key: i, style: { display: 'flex', gap: 8, marginBottom: 10, alignItems: 'center' } },
-        // Label field (e.g. "Plumbing Fixtures")
+    React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 } },
+      React.createElement('div', { style: { fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.15em', textTransform: 'uppercase', color: C.goldDark, fontWeight: 500 } }, 'Allowances'),
+      React.createElement('div', { style: { fontFamily: "'Figtree', sans-serif", fontSize: 10, color: C.magnolia, fontWeight: 500 } }, `${includedCount}/${allowances.length}`)
+    ),
+    React.createElement('div', { style: { fontFamily: "'Figtree', sans-serif", fontSize: 10, lineHeight: 1.5, color: C.goldDark, marginBottom: 12, fontStyle: 'italic' } },
+      'Unchecked categories print as excluded, not omitted'),
+
+    allowances.map((a, i) => {
+      const on = a.included !== false;
+      const isLegacy = !fixedIds.has(a.id);
+      return React.createElement('div', {
+        key: a.id || i,
+        style: { display: 'flex', gap: 8, marginBottom: 10, alignItems: 'center', opacity: on ? 1 : 0.45, transition: 'opacity 0.15s' },
+      },
+        checkbox(on, () => patch(i, { included: !on })),
+        // The label is fixed for a category — plain text, not an input.
+        React.createElement('span', {
+          style: { flex: 2, fontFamily: "'Figtree', sans-serif", fontSize: 11, color: C.slate, cursor: 'pointer' },
+          onClick: () => patch(i, { included: !on }),
+        }, a.label),
         React.createElement('input', {
-          value: a.label,
-          onChange: e => { const n = [...allowances]; n[i] = { ...n[i], label: e.target.value }; onChange(n); },
-          style: { flex: 2, fontFamily: "'Figtree', sans-serif", fontSize: 11, border: 'none', borderBottom: `1px solid ${C.border}`, padding: '4px 0', background: 'transparent', outline: 'none', color: C.slate },
-        }),
-        // Amount field (e.g. "$20,000")
-        React.createElement('input', {
-          value: a.amount,
-          onChange: e => { const n = [...allowances]; n[i] = { ...n[i], amount: e.target.value }; onChange(n); },
+          value: a.amount || '',
+          placeholder: '$0',
+          onChange: e => patch(i, { amount: e.target.value }),
           style: { flex: 1, fontFamily: "'Figtree', sans-serif", fontSize: 11, border: 'none', borderBottom: `1px solid ${C.border}`, padding: '4px 0', background: 'transparent', outline: 'none', color: C.magnolia, fontWeight: 500, textAlign: 'right' },
         }),
-        React.createElement('button', {
-          onClick: () => onChange(allowances.filter((_, j) => j !== i)),
-          style: { background: 'none', border: 'none', cursor: 'pointer', color: C.goldDark, fontSize: 13, padding: '0 2px' },
-        }, '✕')
-      )
-    ),
-    React.createElement('button', {
-      onClick: () => onChange([...allowances, { id: Date.now(), label: 'New Allowance', amount: '$0', desc: '' }]),
-      style: { ...btnSmall(C.bgLight, C.slate), marginTop: 4, width: '100%', textAlign: 'center' },
-    }, '+ Add Allowance')
+        // Fixed categories can't be removed — unchecking is how you exclude one.
+        // Hand-typed rows from older projects can still be deleted.
+        isLegacy
+          ? React.createElement('button', {
+              onClick: () => onChange(allowances.filter((_, j) => j !== i)),
+              title: 'Remove this one-off allowance',
+              style: { background: 'none', border: 'none', cursor: 'pointer', color: C.goldDark, fontSize: 13, padding: '0 2px' },
+            }, '✕')
+          : React.createElement('span', { style: { width: 13, flexShrink: 0 } })
+      );
+    })
   );
 }
 

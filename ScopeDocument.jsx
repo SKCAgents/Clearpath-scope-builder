@@ -7,6 +7,20 @@ function ScopeDocument({ info, sections, exclusions, allowances, addOns = [], de
   const includedSections = sections.filter(s => s.items.some(i => i.included));
   const includedExclusions = exclusions.filter(e => e.included);
 
+  // Allowances are a fixed checkbox list: { id, label, amount, included }.
+  // Scopes saved by an earlier version of the app have no `included` field at
+  // all, so "missing" has to read as included — only an explicit false pulls an
+  // allowance out of the covered list and into the excluded sentence.
+  const includedAllowances = allowances.filter(a => a.included !== false);
+  const excludedAllowances = allowances.filter(a => a.included === false);
+
+  // Price and schedule are derived rather than typed. One price is entered and
+  // printed only as a ±10% band; the four schedule dates come from today plus
+  // the two phase durations. All of that logic lives in ScopeSchedule.js, which
+  // the script tags load before this file.
+  const range = window.cpPriceRange(info.estimate);
+  const sched = window.cpComputeSchedule(info);
+
   // Styles
   const docStyle = { fontFamily: "'Figtree', sans-serif", fontWeight: 300, fontSize: 11, color: slate, background: '#fff', width: '100%' };
 
@@ -103,24 +117,35 @@ function ScopeDocument({ info, sections, exclusions, allowances, addOns = [], de
         includedSections.map(section => {
           const activeItems = section.items.filter(i => i.included);
           if (!activeItems.length) return null;
-          // Check if any allowance box matches this section
-          const sectionAllowances = allowances.filter(a =>
-            a.included !== false && section.title.toLowerCase().includes(a.sectionHint || '__none__')
-          );
           return React.createElement('div', { key:section.id, style:{ marginBottom:4 } },
             React.createElement(SubTitle, { text:section.title }),
             activeItems.map((item, i) =>
               React.createElement(Bullet, { key:i, text:item.text })
             )
           );
-        }),
+        })
+      ),
 
-        // Allowances as callout boxes
-        allowances.length > 0 && React.createElement('div', { style:{ marginTop:20 } },
+      // Allowances — deliberately outside the Inclusions guard above. The
+      // allowance figures and the excluded list are contractual either way, so
+      // they still have to print on a scope where no line item happens to be
+      // checked.
+      (includedAllowances.length > 0 || excludedAllowances.length > 0) && React.createElement('div', { style:{ marginTop:20 } },
+        includedAllowances.length > 0 && React.createElement('div', {},
           React.createElement(SubTitle, { text:'Included Allowances' }),
-          allowances.map((a, i) =>
-            React.createElement(AllowanceBox, { key:i, amount:a.amount, label:a.label, desc:a.desc || '' })
+          includedAllowances.map((a, i) =>
+            // Keyed on id where present: filtering shifts array indices, so the
+            // index alone is not a stable identity across renders.
+            React.createElement(AllowanceBox, { key:a.id || i, amount:a.amount, label:a.label, desc:a.desc || '' })
           )
+        ),
+        // Named explicitly rather than left silent, so an unchecked allowance
+        // cannot later be read as an oversight.
+        excludedAllowances.length > 0 && React.createElement('div', {},
+          React.createElement(SubTitle, { text:'Excluded from Allowances' }),
+          React.createElement(Bullet, {
+            text:`The following carry no allowance and are excluded from this scope: ${excludedAllowances.map(a => a.label).join(', ')}.`
+          })
         )
       ),
 
@@ -139,19 +164,23 @@ function ScopeDocument({ info, sections, exclusions, allowances, addOns = [], de
 
       React.createElement(Rule),
 
-      // Estimate
-      info.estimate && React.createElement('div', {},
+      // Preliminary budgetary range — the only price the client ever sees.
+      // `info.estimate` is the single figure that was entered, but it is never
+      // rendered: printing the midpoint alongside a band invites the client to
+      // treat it as the quote and the band as padding. It goes to cpPriceRange
+      // and nowhere else. A null range means no usable price was entered, which
+      // suppresses the whole box.
+      range && React.createElement('div', {},
         React.createElement('div', {
           style:{ background:slate, padding:'24px 32px', display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:24 }
         },
           React.createElement('div', {},
-            React.createElement('div', { style:{ fontFamily:"'Figtree', sans-serif", fontSize:9, letterSpacing:'0.2em', textTransform:'uppercase', color:gold, marginBottom:8 } }, 'Preliminary Estimated Total'),
-            React.createElement('div', { style:{ fontFamily:"'Cormorant Garamond', Georgia, serif", fontWeight:500, fontSize:42, color:offwhite, lineHeight:1 } }, info.estimate || '$—'),
-            info.estimateLow && info.estimateHigh && React.createElement('div', { style:{ fontFamily:"'Figtree', sans-serif", fontSize:11, color:'rgba(239,236,232,0.65)', marginTop:8 } },
-              `Range: ${info.estimateLow} — ${info.estimateHigh}  (±5%)`
-            ),
+            React.createElement('div', { style:{ fontFamily:"'Figtree', sans-serif", fontSize:9, letterSpacing:'0.2em', textTransform:'uppercase', color:gold, marginBottom:8 } }, 'Preliminary Budgetary Range'),
+            // 30px rather than the 42px a single figure carried: two formatted
+            // amounts plus the en dash would wrap at 8.5in print width.
+            React.createElement('div', { style:{ fontFamily:"'Cormorant Garamond', Georgia, serif", fontWeight:500, fontSize:30, color:offwhite, lineHeight:1 } }, range.rangeLabel),
             React.createElement('div', { style:{ fontFamily:"'Figtree', sans-serif", fontSize:10, color:'rgba(239,236,232,0.4)', marginTop:4 } },
-              'Final price determined after final scope and selections are made.'
+              window.CP_RANGE_DISCLAIMER
             )
           )
         )
@@ -180,24 +209,45 @@ function ScopeDocument({ info, sections, exclusions, allowances, addOns = [], de
         React.createElement(Rule)
       ),
 
-      // Schedule
-      (info.startDate || info.endDate || info.duration || info.scheduleNotes) && React.createElement('div', {},
+      // Schedule — four derived dates. Nothing here is typed in, so the section
+      // is unconditional: cpComputeSchedule always returns a full schedule from
+      // today plus the two phase durations (defaults included).
+      React.createElement('div', {},
         React.createElement(SecTitle, { text:'Schedule' }),
         React.createElement('div', {
-          style:{ display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:16, marginBottom: info.scheduleNotes ? 18 : 0 }
+          style:{ display:'grid', gridTemplateColumns:'repeat(2, 1fr)', gap:16, marginBottom:14 }
         },
-          [['Estimated Start', info.startDate], ['Estimated Completion', info.endDate], ['Total Duration', info.duration]]
-            .filter(([_, v]) => v)
-            .map(([label, value], i) =>
-              React.createElement('div', {
-                key:i,
-                style:{ background:'#F5F2EF', borderLeft:`3px solid ${magnolia}`, padding:'14px 18px' }
-              },
-                React.createElement('div', { style:{ fontFamily:"'Figtree', sans-serif", fontSize:9, letterSpacing:'0.18em', textTransform:'uppercase', color:goldDark, marginBottom:6, fontWeight:500 } }, label),
-                React.createElement('div', { style:{ fontFamily:"'Cormorant Garamond', Georgia, serif", fontWeight:500, fontSize:18, color:slate, lineHeight:1.2 } }, value)
-              )
+          [
+            ['Design Start',          window.cpFormatDate(sched.designStart)],
+            ['Design Complete',       window.cpFormatDate(sched.designComplete)],
+            ['Construction Start',    window.cpFormatDate(sched.constructionStart)],
+            ['Construction Complete', window.cpFormatDate(sched.constructionComplete)]
+          ].map(([label, value], i) =>
+            React.createElement('div', {
+              key:i,
+              style:{ background:'#F5F2EF', borderLeft:`3px solid ${magnolia}`, padding:'14px 18px' }
+            },
+              React.createElement('div', { style:{ fontFamily:"'Figtree', sans-serif", fontSize:9, letterSpacing:'0.18em', textTransform:'uppercase', color:goldDark, marginBottom:6, fontWeight:500 } }, label),
+              React.createElement('div', { style:{ fontFamily:"'Cormorant Garamond', Georgia, serif", fontWeight:500, fontSize:18, color:slate, lineHeight:1.2 } }, value)
             )
+          )
         ),
+        // Effective weeks, not the weeks that were entered — a holiday inside a
+        // phase adds one, and the printed dates already reflect that.
+        React.createElement('div', {
+          style:{ fontFamily:"'Figtree', sans-serif", fontSize:11, color:goldDark }
+        }, `Design ${sched.designWeeksEffective} weeks · Construction ${sched.constructionWeeksEffective} weeks · Total ${sched.totalWeeksEffective} weeks`),
+        // Says why a phase runs longer than expected. De-duplicated via a Set:
+        // a holiday can land in both phases and would otherwise be named twice.
+        (sched.designHolidays.length > 0 || sched.constructionHolidays.length > 0) && React.createElement('div', {
+          style:{ fontFamily:"'Figtree', sans-serif", fontSize:10, fontStyle:'italic', color:goldDark, marginTop:4 }
+        }, `Includes one additional week for ${window.cpJoinNames([...new Set([...sched.designHolidays, ...sched.constructionHolidays])])}.`),
+        // The dates are relative to the day this document was generated, so say
+        // so — a client comparing two printings should not read a shifted date
+        // as a slipped schedule.
+        React.createElement('div', {
+          style:{ fontFamily:"'Figtree', sans-serif", fontSize:10, fontStyle:'italic', color:goldDark, marginTop:4 }
+        }, `Dates are calculated from ${window.cpFormatDate(sched.designStart)}. Regenerating this scope on a later date will shift the schedule.`),
         info.scheduleNotes && React.createElement('p', {
           style:{ fontFamily:"'Figtree', sans-serif", fontWeight:300, fontSize:11, lineHeight:1.7, color:slate, whiteSpace:'pre-wrap', marginTop:6 }
         }, info.scheduleNotes),

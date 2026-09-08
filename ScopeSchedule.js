@@ -1,0 +1,218 @@
+/**
+ * ScopeSchedule.js — Derived schedule dates and the preliminary price range
+ *
+ * Pure logic, no React, no DOM. Loaded as a plain script before the React
+ * files so both the editor UI and the two document renderers (ScopeDocument.jsx
+ * for print/PDF, ScopeDocx.js for Word) compute the same numbers from the same
+ * code.
+ *
+ * Two things live here:
+ *
+ *   1. SCHEDULE — the project schedule is not typed in by hand. It is derived
+ *      from today's date plus two durations in weeks (design, construction):
+ *
+ *        design start         = today
+ *        design complete      = design start + design duration
+ *        construction start   = design complete
+ *        construction complete= construction start + construction duration
+ *
+ *      Holiday rule: if Thanksgiving week or Christmas week lands inside a
+ *      phase, that phase gets one extra week. Both can apply (+2 weeks).
+ *      Nothing else pushes the schedule.
+ *
+ *      Because the dates are derived from "today", they are computed at render
+ *      time — a scope generated in October reads differently from the same
+ *      project generated in November. That is intentional.
+ *
+ *   2. PRICE RANGE — one price is entered; the document shows it as a
+ *      ±10% budgetary range and never prints the raw midpoint.
+ */
+
+
+// ── Date primitives ───────────────────────────────────────────────────────────
+
+// Local-midnight copy of a date, so day arithmetic can't be nudged by a time
+// component or by a DST shift landing mid-afternoon.
+function cpStartOfDay(d) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function cpAddDays(d, n) {
+  const out = cpStartOfDay(d);
+  out.setDate(out.getDate() + n);
+  return out;
+}
+
+function cpAddWeeks(d, n) {
+  return cpAddDays(d, n * 7);
+}
+
+
+// ── Holidays ──────────────────────────────────────────────────────────────────
+// Only two dates matter, and only because the trades effectively stand down for
+// the week around them.
+
+// US Thanksgiving — the fourth Thursday in November.
+function cpThanksgiving(year) {
+  const nov1 = new Date(year, 10, 1);
+  // getDay(): Sunday 0 … Thursday 4. Step forward to the first Thursday, then
+  // add three more weeks to reach the fourth.
+  const firstThursday = 1 + ((4 - nov1.getDay() + 7) % 7);
+  return new Date(year, 10, firstThursday + 21);
+}
+
+function cpChristmas(year) {
+  return new Date(year, 11, 25);
+}
+
+// Every holiday landing in [start, end). A phase can span a year boundary (and,
+// with long durations, more than one), so walk each year the window touches.
+function cpHolidaysIn(start, end) {
+  const found = [];
+  for (let y = start.getFullYear(); y <= end.getFullYear(); y++) {
+    [['Thanksgiving', cpThanksgiving(y)], ['Christmas', cpChristmas(y)]].forEach(([name, date]) => {
+      if (date >= start && date < end) found.push({ name, date, key: name + y });
+    });
+  }
+  return found;
+}
+
+// Extend a phase by one week per holiday that falls inside it.
+//
+// The extension is applied iteratively: pushing a phase a week later can pull a
+// second holiday into the window (a phase ending just short of Thanksgiving
+// that gets extended into Christmas week), and that one pushes too. Each
+// holiday is only ever counted once, so this converges.
+function cpExtendForHolidays(start, weeks) {
+  let end = cpAddWeeks(start, weeks);
+  const counted = [];
+  let more = true;
+  while (more) {
+    more = false;
+    for (const h of cpHolidaysIn(start, end)) {
+      if (counted.some(c => c.key === h.key)) continue;
+      counted.push(h);
+      end = cpAddDays(end, 7);
+      more = true;
+    }
+  }
+  return { end, holidays: counted };
+}
+
+
+// ── Schedule ──────────────────────────────────────────────────────────────────
+
+const CP_DEFAULT_DESIGN_WEEKS = 6;
+const CP_DEFAULT_CONSTRUCTION_WEEKS = 5;
+
+// Read a duration out of project info, falling back to the default when the
+// field is blank, non-numeric, or nonsensical. Whole weeks only.
+function cpWeeks(value, fallback) {
+  const n = parseFloat(String(value === 0 ? 0 : (value || '')).replace(/[^0-9.]/g, ''));
+  if (!isFinite(n) || n <= 0) return fallback;
+  return Math.round(n);
+}
+
+// The whole schedule, derived. `from` defaults to today and exists so the
+// document renderers and any test can pin a date.
+//
+// Returns Date objects plus the effective (holiday-extended) week counts and
+// which holidays did the extending, so the document can say why a phase is
+// longer than the number that was typed in.
+function cpComputeSchedule(info, from) {
+  const designWeeks       = cpWeeks(info?.designWeeks,       CP_DEFAULT_DESIGN_WEEKS);
+  const constructionWeeks = cpWeeks(info?.constructionWeeks, CP_DEFAULT_CONSTRUCTION_WEEKS);
+
+  const designStart = cpStartOfDay(from ? new Date(from) : new Date());
+  const design      = cpExtendForHolidays(designStart, designWeeks);
+
+  const constructionStart = design.end;   // construction starts when design completes
+  const construction      = cpExtendForHolidays(constructionStart, constructionWeeks);
+
+  const weeksBetween = (a, b) => Math.round((b - a) / (7 * 24 * 60 * 60 * 1000));
+
+  return {
+    designStart,
+    designComplete:       design.end,
+    constructionStart,
+    constructionComplete: construction.end,
+
+    designWeeks,                                             // as entered
+    constructionWeeks,
+    designWeeksEffective:       weeksBetween(designStart, design.end),
+    constructionWeeksEffective: weeksBetween(constructionStart, construction.end),
+    totalWeeksEffective:        weeksBetween(designStart, construction.end),
+
+    designHolidays:       design.holidays.map(h => h.name),
+    constructionHolidays: construction.holidays.map(h => h.name),
+  };
+}
+
+// "September 8, 2026" — the form used for every date printed in the document.
+function cpFormatDate(d) {
+  if (!(d instanceof Date) || isNaN(d)) return '';
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+// Human list: ['Thanksgiving', 'Christmas'] → "Thanksgiving and Christmas"
+function cpJoinNames(names) {
+  const list = (names || []).filter(Boolean);
+  if (!list.length) return '';
+  if (list.length === 1) return list[0];
+  return list.slice(0, -1).join(', ') + ' and ' + list[list.length - 1];
+}
+
+
+// ── Preliminary price range ───────────────────────────────────────────────────
+
+const CP_RANGE_PCT = 0.10;   // ±10%
+
+// Pull a number out of anything the user might type: "$997,972", "997972",
+// "1.2" … Returns null for blanks and for text like "TBD", so callers can tell
+// "no price yet" apart from "$0".
+function cpParseMoney(value) {
+  if (value === 0) return 0;
+  if (!value) return null;
+  const n = parseFloat(String(value).replace(/[^0-9.]/g, ''));
+  return isFinite(n) ? n : null;
+}
+
+// "$997,972" — no cents. ScopeDocx.js runs its own money() over these to add
+// the space after the dollar sign that the Word template uses.
+function cpFormatMoney(n) {
+  if (typeof n !== 'number' || !isFinite(n)) return '';
+  return '$' + Math.round(n).toLocaleString('en-US');
+}
+
+// The range that gets printed. Rounded outward — low floors, high ceilings — so
+// the quoted band is never narrower than the true ±10%. Under $10,000 the
+// rounding step drops to $100 so small scopes don't collapse into one number.
+function cpPriceRange(price) {
+  const n = cpParseMoney(price);
+  if (n === null || n <= 0) return null;
+  const step = n >= 10000 ? 1000 : 100;
+  const low  = Math.floor((n * (1 - CP_RANGE_PCT)) / step) * step;
+  const high = Math.ceil((n * (1 + CP_RANGE_PCT)) / step) * step;
+  return {
+    low, high,
+    lowLabel:   cpFormatMoney(low),
+    highLabel:  cpFormatMoney(high),
+    rangeLabel: cpFormatMoney(low) + ' – ' + cpFormatMoney(high),
+  };
+}
+
+// The fine print that has to accompany the range wherever it appears.
+const CP_RANGE_DISCLAIMER =
+  'This is a preliminary budgetary range at plus or minus 10 percent, subject to design, engineering and final selections.';
+
+
+// ── Export ────────────────────────────────────────────────────────────────────
+// Plain script, no modules — everything hangs off window, matching the rest of
+// the app.
+Object.assign(window, {
+  cpStartOfDay, cpAddDays, cpAddWeeks,
+  cpThanksgiving, cpChristmas, cpHolidaysIn, cpExtendForHolidays,
+  cpComputeSchedule, cpFormatDate, cpJoinNames, cpWeeks,
+  cpParseMoney, cpFormatMoney, cpPriceRange,
+  CP_DEFAULT_DESIGN_WEEKS, CP_DEFAULT_CONSTRUCTION_WEEKS, CP_RANGE_PCT, CP_RANGE_DISCLAIMER,
+});
