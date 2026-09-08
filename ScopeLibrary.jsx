@@ -269,27 +269,33 @@ const EXCLUSION_LIBRARY = [
 // allowances section. Unchecked = explicitly excluded, and printed as excluded
 // rather than just left off the page.
 //
-// The amounts here are the DEFAULTS for a new project. They are editable per
-// project, and they are editable for all future projects in one place — the
-// "Allowance Defaults" card in the admin Master Template screen, which stores an
-// override in the library. This array is the fallback when no override is set.
+// This array is only the SEED. The live list is whatever the "Allowance
+// Defaults" card in the admin Master Template screen has saved: categories can
+// be added and deleted there, each carries a default amount, and each can be
+// pre-selected so new projects start with it checked. Once that card has been
+// saved even once, its list replaces this one wholesale — that is what makes a
+// deletion stick.
 //
-// Where a default below is non-zero it was taken from an allowance figure
+// Fields:
+//   amount   — the starting dollar amount for a new project (editable per project)
+//   included — whether a new project starts with this category checked
+//
+// Where a seed amount below is non-zero it was taken from an allowance figure
 // already written into SCOPE_LIBRARY above (plumbing fixtures, lighting,
 // appliances). The $0 entries are placeholders — set them once in the admin
 // screen and every new project picks them up.
 const ALLOWANCE_CATEGORIES = [
-  { id: 'doors_windows',        label: 'Doors & Windows',       amount: '$0' },
-  { id: 'millwork',             label: 'Millwork',              amount: '$0' },
-  { id: 'cabinets_countertops', label: 'Cabinets & Countertops', amount: '$0' },
-  { id: 'plumbing_fixtures',    label: 'Plumbing Fixtures',     amount: '$11,000' },
-  { id: 'lighting_fixtures',    label: 'Lighting Fixtures',     amount: '$2,000' },
-  { id: 'appliances',           label: 'Appliances',            amount: '$30,000' },
-  { id: 'tile',                 label: 'Tile',                  amount: '$0' },
-  { id: 'flooring',             label: 'Flooring',              amount: '$0' },
-  { id: 'paint',                label: 'Paint',                 amount: '$0' },
-  { id: 'mirrors',              label: 'Mirrors',               amount: '$0' },
-  { id: 'bath_hardware',        label: 'Bath Hardware',         amount: '$0' },
+  { id: 'doors_windows',        label: 'Doors & Windows',        amount: '$0',      included: false },
+  { id: 'millwork',             label: 'Millwork',               amount: '$0',      included: false },
+  { id: 'cabinets_countertops', label: 'Cabinets & Countertops', amount: '$0',      included: false },
+  { id: 'plumbing_fixtures',    label: 'Plumbing Fixtures',      amount: '$11,000', included: false },
+  { id: 'lighting_fixtures',    label: 'Lighting Fixtures',      amount: '$2,000',  included: false },
+  { id: 'appliances',           label: 'Appliances',             amount: '$30,000', included: false },
+  { id: 'tile',                 label: 'Tile',                   amount: '$0',      included: false },
+  { id: 'flooring',             label: 'Flooring',               amount: '$0',      included: false },
+  { id: 'paint',                label: 'Paint',                  amount: '$0',      included: false },
+  { id: 'mirrors',              label: 'Mirrors',                amount: '$0',      included: false },
+  { id: 'bath_hardware',        label: 'Bath Hardware',          amount: '$0',      included: false },
 ];
 
 // The library row id that holds the admin override of the amounts above.

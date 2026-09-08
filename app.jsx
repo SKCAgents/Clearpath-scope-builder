@@ -604,12 +604,15 @@ function buildTemplateView(libraryData) {
   const saved = typeof window.cpParseAllowanceDefaults === 'function'
     ? window.cpParseAllowanceDefaults(libraryData)
     : null;
-  const savedById = {}, savedByLabel = {};
-  (saved || []).forEach(a => { if (a.id) savedById[a.id] = a; savedByLabel[a.label] = a; });
-  const allowanceDefaults = (window.ALLOWANCE_CATEGORIES || []).map(c => {
-    const hit = savedById[c.id] || savedByLabel[c.label];
-    return { id: c.id, label: c.label, amount: hit ? hit.amount : c.amount };
-  });
+  // The saved list replaces the ALLOWANCE_CATEGORIES seed wholesale rather than
+  // being layered over it — matching initAllowances in index.html. Layering
+  // would resurrect a category deleted here, and would hide one added here.
+  const allowanceDefaults = (saved || (window.ALLOWANCE_CATEGORIES || [])).map(c => ({
+    id:       c.id || '',
+    label:    c.label,
+    amount:   c.amount || '$0',
+    included: !!c.included,
+  }));
 
   return { sections, exclusions, allowanceDefaults, hasAllowanceOverride: !!saved };
 }
@@ -814,38 +817,105 @@ function TemplateExclusions({ initial }) {
   );
 }
 
-// The one place allowance amounts are configured. Editing here changes the
-// defaults for every NEW project; projects that already exist keep the amounts
-// saved in their own data, so a quote that's out with a client never moves.
+// The one place the allowance checklist is configured: which categories exist,
+// what each one starts at, and which ones a new project starts with checked.
 //
-// The category list itself is fixed in code (ALLOWANCE_CATEGORIES in
-// ScopeLibrary.jsx) — only the amounts are editable, which is what keeps the
-// wording identical across every scope document.
+// Editing here changes NEW projects only. Projects that already exist keep the
+// categories and amounts saved in their own data, so a quote that's out with a
+// client never moves — and a category deleted here stays on the older projects
+// that quoted it.
+//
+// Saving writes the whole list, which is what makes a deletion stick: the saved
+// list replaces the ALLOWANCE_CATEGORIES seed rather than layering over it.
 function TemplateAllowanceDefaults({ initial, hasOverride }) {
   const [rows, setRows] = React.useState(initial);
+  const [newLabel, setNewLabel] = React.useState('');
   const [saving, setSaving] = React.useState(false);
   const [saved, setSaved] = React.useState(false);
   const [open, setOpen] = React.useState(false);
 
-  function setAmount(i, amount) {
-    setRows(a => a.map((r, j) => j === i ? { ...r, amount } : r));
-    setSaved(false);
+  // Any edit clears the "Saved ✓" confirmation so the button reflects that
+  // there are unsaved changes again.
+  function touched() { setSaved(false); }
+
+  function setField(i, next) {
+    setRows(a => a.map((r, j) => j === i ? { ...r, ...next } : r));
+    touched();
+  }
+
+  function remove(i) {
+    const r = rows[i];
+    if (!window.confirm(`Delete the "${r.label}" allowance category?\n\nIt will stop appearing on new projects. Projects that already include it keep it.`)) return;
+    setRows(a => a.filter((_, j) => j !== i));
+    touched();
+  }
+
+  // Order here is the order the categories appear in the editor and on the
+  // printed document, so it's worth being able to arrange them.
+  function move(i, dir) {
+    const j = i + dir;
+    if (j < 0 || j >= rows.length) return;
+    setRows(a => { const n = [...a]; [n[i], n[j]] = [n[j], n[i]]; return n; });
+    touched();
+  }
+
+  function add() {
+    const label = newLabel.trim();
+    if (!label) return;
+    if (rows.some(r => (r.label || '').trim().toLowerCase() === label.toLowerCase())) {
+      alert('There is already a category with that name.');
+      return;
+    }
+    // Slug plus a short timestamp: readable in the stored JSON, and unique even
+    // if a category is deleted and a similarly named one added later. The id is
+    // what existing projects match on, so it must not be reused.
+    const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'category';
+    setRows(a => [...a, { id: 'alw_' + slug + '_' + Date.now().toString(36), label, amount: '$0', included: false }]);
+    setNewLabel('');
+    touched();
   }
 
   async function save() {
+    const clean = rows.map(r => ({ ...r, label: (r.label || '').trim() })).filter(r => r.label);
     setSaving(true);
-    const { error } = await cpSaveAllowanceDefaults(rows);
+    const { error } = await cpSaveAllowanceDefaults(clean);
     setSaving(false);
     if (error) { alert('Failed to save allowance defaults: ' + error.message); return; }
+    setRows(clean);
     setSaved(true);
   }
+
+  const defaultOnCount = rows.filter(r => r.included).length;
+  const arrowBtn = (disabled) => ({ background: 'none', border: 'none', cursor: disabled ? 'default' : 'pointer', color: disabled ? C.border : C.goldDark, fontSize: 13, padding: '0 2px' });
+
+  // Same 16px square as the scope-line and project allowance checkboxes, so a
+  // check reads the same everywhere in the app.
+  const checkbox = (on, onClick, title) => (
+    <button
+      onClick={onClick}
+      title={title}
+      style={{
+        width: 16, height: 16, flexShrink: 0,
+        border: `1.5px solid ${on ? C.magnolia : C.goldDark}`,
+        background: on ? C.magnolia : 'transparent',
+        cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      {on && (
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+          <polyline points="1.5,5 4,7.5 8.5,2" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      )}
+    </button>
+  );
 
   return (
     <div style={{ background: 'white', border: `1px solid ${C.border}`, borderLeft: `3px solid ${C.gold}`, marginBottom: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', cursor: 'pointer', background: open ? C.bgLight : 'white' }} onClick={() => setOpen(o => !o)}>
         <span style={{ color: C.goldDark, fontSize: 12, width: 12 }}>{open ? '▾' : '▸'}</span>
         <span style={{ flex: 1, fontFamily: "'Figtree', sans-serif", fontWeight: 500, fontSize: 12, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.slate }}>Allowance Defaults</span>
-        <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, color: C.goldDark }}>{rows.length} categories</span>
+        <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, color: C.goldDark }}>{rows.length} categories · {defaultOnCount} pre-selected</span>
+        {!saved && <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 8, letterSpacing: '0.12em', textTransform: 'uppercase', color: C.goldDark, fontStyle: 'italic' }}>unsaved</span>}
         <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 8, letterSpacing: '0.12em', textTransform: 'uppercase', color: hasOverride ? C.magnolia : C.gold }}>
           {hasOverride ? 'Customized' : 'Built-in'}
         </span>
@@ -853,19 +923,49 @@ function TemplateAllowanceDefaults({ initial, hasOverride }) {
       {open && (
         <div style={{ padding: '8px 12px 12px', borderTop: `1px solid ${C.border}` }} onClick={e => e.stopPropagation()}>
           <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, lineHeight: 1.6, color: C.goldDark, marginBottom: 10, fontStyle: 'italic' }}>
-            Starting amounts for new projects. Every project can still override them, and all categories start unchecked.
+            The allowance checklist new projects start from. Check a category to have it start included; leave it unchecked and a new project prints it as excluded until someone checks it. Amounts stay editable per project.
           </div>
+
+          {/* Column legend — the checkbox column needs explaining, the rest don't */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+            <span style={{ width: 16, flexShrink: 0, fontFamily: "'Figtree', sans-serif", fontSize: 8, color: C.goldDark, textAlign: 'center' }}>✓</span>
+            <span style={{ flex: 1, fontFamily: "'Figtree', sans-serif", fontSize: 8, letterSpacing: '0.12em', textTransform: 'uppercase', color: C.goldDark }}>Category</span>
+            <span style={{ width: 110, fontFamily: "'Figtree', sans-serif", fontSize: 8, letterSpacing: '0.12em', textTransform: 'uppercase', color: C.goldDark, textAlign: 'right' }}>Default Amount</span>
+            <span style={{ width: 58, flexShrink: 0 }} />
+          </div>
+
           {rows.map((r, i) => (
-            <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-              <span style={{ flex: 1, fontFamily: "'Figtree', sans-serif", fontSize: 12, color: C.slate }}>{r.label}</span>
+            <div key={r.id || i} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, opacity: r.included ? 1 : 0.75 }}>
+              {checkbox(!!r.included, () => setField(i, { included: !r.included }), r.included ? 'Starts checked on new projects' : 'Starts unchecked — prints as excluded')}
+              <input
+                value={r.label || ''}
+                onChange={e => setField(i, { label: e.target.value })}
+                style={{ flex: 1, fontFamily: "'Figtree', sans-serif", fontSize: 12, border: 'none', borderBottom: `1px solid ${C.border}`, padding: '4px 0', color: C.slate, outline: 'none', background: 'transparent' }}
+              />
               <input
                 value={r.amount || ''}
                 placeholder="$0"
-                onChange={e => setAmount(i, e.target.value)}
+                onChange={e => setField(i, { amount: e.target.value })}
                 style={{ width: 110, fontFamily: "'Figtree', sans-serif", fontSize: 12, border: `1px solid ${C.border}`, padding: '5px 8px', color: C.magnolia, fontWeight: 500, textAlign: 'right', outline: 'none', background: 'white' }}
               />
+              <button onClick={() => move(i, -1)} disabled={i === 0} title="Move up" style={arrowBtn(i === 0)}>↑</button>
+              <button onClick={() => move(i, 1)} disabled={i === rows.length - 1} title="Move down" style={arrowBtn(i === rows.length - 1)}>↓</button>
+              <button onClick={() => remove(i)} title="Delete category" style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.goldDark, fontSize: 12, padding: '2px 4px' }}>✕</button>
             </div>
           ))}
+
+          {/* Add a category */}
+          <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+            <input
+              placeholder="Add a category…"
+              value={newLabel}
+              onChange={e => setNewLabel(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && add()}
+              style={{ flex: 1, fontFamily: "'Figtree', sans-serif", fontSize: 12, border: `1px solid ${C.border}`, padding: '6px 8px', color: C.slate, outline: 'none', background: 'white' }}
+            />
+            <button onClick={add} style={btnSmall(C.slate, 'white')}>+ Category</button>
+          </div>
+
           <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, marginTop: 14, paddingTop: 10, borderTop: `1px dashed ${C.border}` }}>
             {saved && <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, color: C.magnolia }}>Saved ✓</span>}
             <button onClick={save} disabled={saving} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', fontWeight: 500, background: C.magnolia, color: 'white', border: 'none', padding: '7px 16px', cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>

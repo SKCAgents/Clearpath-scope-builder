@@ -726,9 +726,11 @@ function AddOnsPanel({ addOns, onChange }) {
 
 
 // ── AllowancesPanel ───────────────────────────────────────────────────
-// The allowance checklist. Categories are fixed (ALLOWANCE_CATEGORIES in
-// ScopeLibrary.jsx) rather than typed in, so the same wording appears on every
-// scope and nothing gets left off by accident.
+// The allowance checklist. Categories come from the master list — managed in
+// the Master Template screen's "Allowance Defaults" card, seeded by
+// ALLOWANCE_CATEGORIES in ScopeLibrary.jsx — rather than being typed in per
+// project, so the same wording appears on every scope and nothing gets left off
+// by accident.
 //
 // Checked   → included in the scope and printed under "Included Allowances"
 //             with its dollar amount.
@@ -743,8 +745,6 @@ function AddOnsPanel({ addOns, onChange }) {
 // an older version of the app. They still render, and they keep a remove
 // button, so no existing quote loses a number.
 function AllowancesPanel({ allowances, onChange }) {
-  const fixedIds = new Set((window.ALLOWANCE_CATEGORIES || []).map(c => c.id));
-
   const patch = (i, next) => onChange(allowances.map((a, j) => j === i ? { ...a, ...next } : a));
 
   const includedCount = allowances.filter(a => a.included !== false).length;
@@ -779,7 +779,11 @@ function AllowancesPanel({ allowances, onChange }) {
 
     allowances.map((a, i) => {
       const on = a.included !== false;
-      const isLegacy = !fixedIds.has(a.id);
+      // Set by mergeAllowances: a row that isn't part of the current master
+      // category list (hand-typed in an older version, or a category the admin
+      // has since deleted). Those can be removed outright; real categories are
+      // excluded by unchecking them.
+      const isLegacy = !!a.custom;
       return React.createElement('div', {
         key: a.id || i,
         style: { display: 'flex', gap: 8, marginBottom: 10, alignItems: 'center', opacity: on ? 1 : 0.45, transition: 'opacity 0.15s' },

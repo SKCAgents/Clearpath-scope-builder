@@ -251,25 +251,36 @@ function applyTemplate(prevSections, libraryData, projectType) {
 // default amount. The user checks the ones that apply and edits amounts per
 // project; unchecked categories print as explicitly excluded.
 //
-// Amounts come from the admin-set defaults in the library when they exist
-// (cpParseAllowanceDefaults), otherwise from the hardcoded ALLOWANCE_CATEGORIES.
-// Matching is by category id, falling back to label so a renamed category still
-// lines up.
+// The list comes from the admin-set defaults in the library when they exist
+// (cpParseAllowanceDefaults), otherwise from the ALLOWANCE_CATEGORIES seed.
+//
+// The admin list REPLACES the seed rather than being layered over it. That is
+// what makes an admin deletion stick — layering would let a deleted category
+// reappear from the seed on the next new project. It also means categories the
+// admin adds flow through with no code change.
+//
+// Each category brings its own default amount and its own default checked
+// state, both set in the admin card.
 function initAllowances(libraryData) {
-  const overrides = typeof window.cpParseAllowanceDefaults === 'function'
+  const admin = typeof window.cpParseAllowanceDefaults === 'function'
     ? window.cpParseAllowanceDefaults(libraryData)
     : null;
 
-  const byId = {}, byLabel = {};
-  (overrides || []).forEach(o => {
-    if (o.id) byId[o.id] = o;
-    byLabel[o.label] = o;
-  });
+  const source = admin || (window.ALLOWANCE_CATEGORIES || []);
 
-  return (window.ALLOWANCE_CATEGORIES || []).map(c => {
-    const o = byId[c.id] || byLabel[c.label];
-    return { id: c.id, label: c.label, amount: (o ? o.amount : c.amount), included: false };
-  });
+  return source.map(c => ({
+    id:       c.id || allowanceIdFor(c.label),
+    label:    c.label,
+    amount:   c.amount || '$0',
+    included: !!c.included,
+  }));
+}
+
+// A stable id for a category that somehow has none (a hand-edited settings row).
+// Derived from the label so the same category keeps the same id across reloads,
+// which is what lets mergeAllowances match a saved project against it.
+function allowanceIdFor(label) {
+  return 'alw_' + String(label || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 }
 
 // Reconciles a saved allowance list with the current category list.
@@ -301,10 +312,14 @@ function mergeAllowances(saved, libraryData) {
     };
   });
 
-  // Anything the user added by hand that isn't one of the fixed categories
+  // Anything left over is either an allowance typed by hand in an older version
+  // of the app, or a category the admin has since deleted from the master list.
+  // Either way this project still quotes it, so it stays — flagged `custom` so
+  // the editor offers a remove button for it (fixed categories are excluded by
+  // unchecking, not deleting).
   const extras = savedList
     .filter(s => !matched.has(s))
-    .map(s => ({ ...s, included: s.included !== undefined ? !!s.included : true }));
+    .map(s => ({ ...s, custom: true, included: s.included !== undefined ? !!s.included : true }));
 
   return [...merged, ...extras];
 }

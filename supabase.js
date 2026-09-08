@@ -400,7 +400,13 @@ window.cpParseAllowanceDefaults = function (libraryData) {
       const obj = JSON.parse(raw);
       // Require at least a label — an entry with no label can't be matched to a
       // category or shown in the UI.
-      return obj && obj.label ? { id: obj.id || '', label: obj.label, amount: obj.amount || '$0' } : null;
+      if (!obj || !obj.label) return null;
+      return {
+        id:       obj.id || '',
+        label:    obj.label,
+        amount:   obj.amount || '$0',
+        included: !!obj.included,   // whether new projects start with it checked
+      };
     } catch {
       return null;   // skip a corrupt entry, keep the rest
     }
@@ -409,13 +415,19 @@ window.cpParseAllowanceDefaults = function (libraryData) {
   return parsed.length ? parsed : null;
 };
 
-// Writes the admin-set defaults. Replaces the whole list in one row.
-// list: [{ id, label, amount }] in display order.
+// Writes the admin-set defaults. Replaces the whole list in one row, so a
+// category deleted in the admin card is genuinely gone for future projects.
+// list: [{ id, label, amount, included }] in display order.
 // Admin-only via RLS on library_sections (and gated by isAdmin() in the UI).
 window.cpSaveAllowanceDefaults = async function (list) {
   const items = (list || [])
-    .filter(a => a && a.label)
-    .map(a => JSON.stringify({ id: a.id || '', label: a.label, amount: a.amount || '$0' }));
+    .filter(a => a && String(a.label).trim())
+    .map(a => JSON.stringify({
+      id:       a.id || '',
+      label:    String(a.label).trim(),
+      amount:   a.amount || '$0',
+      included: !!a.included,
+    }));
 
   const { data: existing } = await _sb
     .from('library_sections')
