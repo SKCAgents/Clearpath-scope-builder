@@ -241,8 +241,9 @@ function PastProjectPicker({ projects = [], onPick, onClose }) {
 // modal costs no extra network call.
 function NewProjectModal({ onClose, onCreate, existingProjects = [] }) {
   const [fields, setFields] = React.useState({ name: '', client_name: '', address: '', project_type: '' });
-  // 'master' | 'tmpl:<templateId>' | 'project'
-  const [startFrom, setStartFrom] = React.useState('master');
+  // Two independent, mutually exclusive choices. Neither set = start from
+  // master, which is the default and so needs no row of its own.
+  const [templateId, setTemplateId] = React.useState('');
   const [pickedProject, setPickedProject] = React.useState(null);
   const [showPicker, setShowPicker] = React.useState(false);
   const [templates, setTemplates] = React.useState([]);
@@ -261,13 +262,20 @@ function NewProjectModal({ onClose, onCreate, existingProjects = [] }) {
     return () => { cancelled = true; };
   }, []);
 
-  // Choosing the "past project" option opens the picker instead of settling the
-  // dropdown — the dropdown only shows a real choice once one is picked.
-  function onStartFromChange(value) {
-    if (value === 'project') { setShowPicker(true); return; }
-    setStartFrom(value);
-    setPickedProject(null);
+  // A template and a past project are two answers to the same question, so
+  // choosing one clears the other.
+  function chooseTemplate(id) {
+    setTemplateId(id);
+    if (id) setPickedProject(null);
   }
+  function chooseProject(p) {
+    setPickedProject(p);
+    setTemplateId('');
+    setShowPicker(false);
+  }
+
+  // Nothing chosen at all — the new project is built from the master library.
+  const fromMaster = !templateId && !pickedProject;
 
   // Helper that returns an onChange handler for a given field name
   function set(key) {
@@ -292,7 +300,7 @@ function NewProjectModal({ onClose, onCreate, existingProjects = [] }) {
 
     let result;
 
-    if (startFrom === 'project' && pickedProject) {
+    if (pickedProject) {
       // cpCopyProject pulls the source's full scope data and re-stamps the
       // identifying fields. The type comes with the scope, so project_type is
       // left out of the payload and cpCopyProject falls back to the source's.
@@ -300,10 +308,9 @@ function NewProjectModal({ onClose, onCreate, existingProjects = [] }) {
         name: fields.name, client_name: fields.client_name, address: fields.address,
       });
 
-    } else if (startFrom.startsWith('tmpl:')) {
+    } else if (templateId) {
       // A template is a one-time copy: fetch its snapshot, deep-copy it into
       // this project's own data (stateFromScope), and stamp the identity on top.
-      const templateId = startFrom.slice(5);
       const { data: tmpl, error: readErr } = await cpGetTemplate(templateId);
       if (readErr || !tmpl) {
         setSaving(false);
@@ -351,42 +358,56 @@ function NewProjectModal({ onClose, onCreate, existingProjects = [] }) {
       <div style={{ background: 'white', padding: 36, width: 480, maxWidth: '90vw' }}>
         <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 22, color: C.slate, marginBottom: 28 }}>New Project</div>
         <form onSubmit={handleSubmit}>
-          {/* Where the new project's scope comes from. The templates group is
-              hidden until at least one template exists, and the past-project
-              option is hidden until there is a past project to copy. */}
+          {/* Where the new project's scope comes from.
+              Master is the default, so it isn't a row in here — leaving the
+              dropdown alone is how you get it. The dropdown is nothing but the
+              templates that exist, and disappears entirely when there are none.
+              Copying a past project is a separate action, since it needs a
+              searchable picker rather than a list of every job ever done. */}
           <div style={{ marginBottom: 18, paddingBottom: 18, borderBottom: `1px solid ${C.border}` }}>
             <label style={labelStyle}>Start From</label>
-            <select
-              value={pickedProject ? 'picked' : startFrom}
-              onChange={e => onStartFromChange(e.target.value)}
-              style={{ ...inputStyle, cursor: 'pointer' }}
-            >
-              <option value="master">Master (default)</option>
-              {templates.length > 0 && (
-                <optgroup label="── Templates ──">
-                  {templates.map(t => (
-                    <option key={t.id} value={'tmpl:' + t.id}>{t.title}</option>
-                  ))}
-                </optgroup>
-              )}
-              {existingProjects.length > 0 && (
-                <optgroup label="────────────">
-                  {/* Shown as the current value once a project has been picked,
-                      so the dropdown reflects the actual choice. */}
-                  {pickedProject && <option value="picked">Copy of: {pickedProject.name || '(Untitled)'}</option>}
-                  <option value="project">Copy from a past project…</option>
-                </optgroup>
-              )}
-            </select>
+
+            {templates.length > 0 && (
+              <select value={templateId} onChange={e => chooseTemplate(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
+                {/* Blank, not "Master" — an empty selection IS master. */}
+                <option value="">—</option>
+                {templates.map(t => <option key={t.id} value={t.id}>{t.title}</option>)}
+              </select>
+            )}
+
+            {/* What you'll actually get, spelled out, since the default is a
+                blank dropdown rather than a labelled row. */}
+            <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, lineHeight: 1.5, color: C.goldDark, marginTop: 8 }}>
+              {pickedProject
+                ? "Copies that project's sections, allowances, add-ons, exclusions, estimate and schedule. The name, client and address below replace the originals, and the prepared date resets to this month. The original project is not changed."
+                : templateId
+                ? "Copies that template's scope in as a starting point. It's a one-time copy — later edits to the template won't change this project."
+                : templates.length > 0
+                ? 'Leave this blank to start from the master library.'
+                : 'Starts from the master library.'}
+            </div>
+
             {pickedProject && (
-              <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, lineHeight: 1.5, color: C.goldDark, marginTop: 8 }}>
-                Copies that project's sections, allowances, add-ons, exclusions, estimate and schedule. The name, client and address below replace the originals, and the prepared date resets to this month. The original project is not changed.
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, background: C.bgLight, borderLeft: `3px solid ${C.magnolia}`, padding: '9px 12px' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 12, color: C.slate, fontWeight: 500 }}>Copy of: {pickedProject.name || '(Untitled)'}</div>
+                  {pickedProject.client_name && (
+                    <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, color: C.goldDark }}>{pickedProject.client_name}</div>
+                  )}
+                </div>
+                <button type="button" onClick={() => setShowPicker(true)} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', background: 'none', color: C.goldDark, border: `1px solid ${C.border}`, padding: '4px 8px', cursor: 'pointer' }}>Change</button>
+                <button type="button" onClick={() => setPickedProject(null)} title="Start from master instead" style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.goldDark, fontSize: 13, padding: '0 2px' }}>✕</button>
               </div>
             )}
-            {startFrom.startsWith('tmpl:') && (
-              <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, lineHeight: 1.5, color: C.goldDark, marginTop: 8 }}>
-                Copies that template's scope in as a starting point. It's a one-time copy — later edits to the template won't change this project.
-              </div>
+
+            {!pickedProject && existingProjects.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowPicker(true)}
+                style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, background: 'none', border: 'none', padding: 0, marginTop: 10, color: C.magnolia, cursor: 'pointer', textDecoration: 'underline' }}
+              >
+                Copy from a past project…
+              </button>
             )}
           </div>
           <div style={{ marginBottom: 18 }}>
@@ -406,7 +427,7 @@ function NewProjectModal({ onClose, onCreate, existingProjects = [] }) {
               lists start with their lines checked. Only relevant when starting
               from Master; a template or a past project brings its own scope and
               its own type. */}
-          {startFrom === 'master' && !pickedProject && (
+          {fromMaster && (
             <div style={{ marginBottom: 28 }}>
               <label style={labelStyle}>Project Type</label>
               <select value={fields.project_type} onChange={set('project_type')} style={{ ...inputStyle, cursor: 'pointer' }}>
@@ -432,7 +453,7 @@ function NewProjectModal({ onClose, onCreate, existingProjects = [] }) {
       {showPicker && (
         <PastProjectPicker
           projects={existingProjects}
-          onPick={p => { setPickedProject(p); setStartFrom('project'); setShowPicker(false); }}
+          onPick={chooseProject}
           onClose={() => setShowPicker(false)}
         />
       )}
@@ -443,9 +464,8 @@ function NewProjectModal({ onClose, onCreate, existingProjects = [] }) {
 // The main project dashboard. Shows all projects with search and sort.
 // Polls for supabase.js to finish loading before making the first DB call,
 // then fetches projects. Search filters client-side since totals are small.
-function ProjectList({ onOpen, onOpenLibrary, onOpenTemplates, currentEmail }) {
+function ProjectList({ onOpen, onOpenTemplates, currentEmail }) {
   const canDelete = isAdmin(currentEmail);
-  const canEditTemplate = isAdmin(currentEmail);
   // null = still loading; [] = loaded but empty; [...] = loaded with projects
   const [projects, setProjects] = React.useState(null);
   const [search, setSearch] = React.useState('');
@@ -497,17 +517,12 @@ function ProjectList({ onOpen, onOpenLibrary, onOpenTemplates, currentEmail }) {
         <img src={(document.getElementById('__logo_icon') || {}).src || 'assets/ClearPath-Icon-Limestone.png'} alt="ClearPath" style={{ height: 32 }} />
         <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 8, letterSpacing: '0.28em', textTransform: 'uppercase', color: C.gold }}>Scope Builder</div>
         <div style={{ flex: 1 }} />
-        {/* Named scope templates — available to everyone, since anyone can
-            save a project's scope as one. */}
-        <button onClick={onOpenTemplates} title="Reusable scopes to start a project from" style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', fontWeight: 400, background: 'none', color: C.gold, border: '1px solid rgba(195,189,177,0.5)', padding: '6px 14px', cursor: 'pointer' }}>
+        {/* One entry point for every scope that isn't a project. Master lives
+            at the top of that screen, named templates below it — so the
+            homepage doesn't need a second button for it. */}
+        <button onClick={onOpenTemplates} title="Master scope library and reusable templates" style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', fontWeight: 400, background: 'none', color: C.gold, border: '1px solid rgba(195,189,177,0.5)', padding: '6px 14px', cursor: 'pointer' }}>
           Templates
         </button>
-        {/* Master Template editor — admins only (edits the shared scope library) */}
-        {canEditTemplate && (
-          <button onClick={onOpenLibrary} title="Edit the master scope library that new projects start from" style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', fontWeight: 400, background: 'none', color: C.gold, border: '1px solid rgba(195,189,177,0.5)', padding: '6px 14px', cursor: 'pointer' }}>
-            Master Template
-          </button>
-        )}
         <button onClick={() => setShowNew(true)} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', fontWeight: 500, background: C.offwhite, color: C.slate, border: 'none', padding: '7px 16px', cursor: 'pointer' }}>
           + New Project
         </button>
@@ -1246,9 +1261,9 @@ function LibraryEditor({ onBack }) {
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: C.bgLight }}>
       {/* Top bar */}
       <div style={{ background: C.slate, height: 52, display: 'flex', alignItems: 'center', padding: '0 24px', gap: 16, flexShrink: 0 }}>
-        <button onClick={onBack} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(239,236,232,0.55)', padding: '0 8px 0 0' }}>← Projects</button>
+        <button onClick={onBack} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(239,236,232,0.55)', padding: '0 8px 0 0' }}>← Templates</button>
         <div style={{ width: 1, height: 20, background: 'rgba(239,236,232,0.15)' }} />
-        <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.22em', textTransform: 'uppercase', color: C.gold, fontWeight: 500 }}>Master Template</div>
+        <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.22em', textTransform: 'uppercase', color: C.gold, fontWeight: 500 }}>Master</div>
         <div style={{ flex: 1 }} />
         <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, color: 'rgba(239,236,232,0.6)', fontStyle: 'italic' }}>Edits apply to new projects only</div>
       </div>
@@ -1312,8 +1327,11 @@ function LibraryEditor({ onBack }) {
 // section of supabase.js.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// The Templates list screen: create, rename, edit, delete.
-function TemplatesList({ onBack, onOpen }) {
+// The Templates screen. Master sits at the top as the primary entry — it's the
+// library everything else is built from — with the named templates below it.
+// Editing master is admin-only (canEditMaster); everyone else sees it as
+// context for where a new template's contents come from.
+function TemplatesList({ onBack, onOpen, onOpenMaster, canEditMaster }) {
   const [templates, setTemplates] = React.useState(null);   // null = loading
   const [library, setLibrary] = React.useState(null);       // needed to seed a new template from master
   const [busy, setBusy] = React.useState(false);
@@ -1382,6 +1400,27 @@ function TemplatesList({ onBack, onOpen }) {
         <div style={{ maxWidth: 860, margin: '0 auto' }}>
           <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, color: C.goldDark, lineHeight: 1.6, marginBottom: 20 }}>
             Reusable scopes to start a project from. A new template begins as a copy of the master library, which you then edit. Editing a template does <strong>not</strong> change master, and does not change any project already created from it.
+          </div>
+
+          {/* Master — the one every project and every new template is built
+              from, so it leads the list rather than sitting in it. */}
+          <div style={{ background: 'white', border: `1px solid ${C.border}`, borderLeft: `3px solid ${C.magnolia}`, padding: '16px 18px', marginBottom: 18, display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+                <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 19, color: C.slate }}>Master</span>
+                <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 8, letterSpacing: '0.14em', textTransform: 'uppercase', color: C.magnolia, fontWeight: 500 }}>Default for new projects</span>
+              </div>
+              <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, lineHeight: 1.6, color: C.goldDark, marginTop: 5 }}>
+                The scope library every project and every new template is built from — sections, standard exclusions and allowance defaults.
+              </div>
+            </div>
+            {canEditMaster
+              ? <button onClick={onOpenMaster} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', fontWeight: 500, background: C.slate, color: C.offwhite, border: 'none', padding: '9px 18px', cursor: 'pointer' }}>Edit Master</button>
+              : <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, color: C.goldDark, fontStyle: 'italic' }}>Admin only</span>}
+          </div>
+
+          <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.15em', textTransform: 'uppercase', color: C.goldDark, fontWeight: 500, marginBottom: 8 }}>
+            Templates
           </div>
 
           {templates === null ? (
@@ -1765,12 +1804,16 @@ function Root() {
         : view.name === 'template' && view.id
         ? <TemplateEditor templateId={view.id} onBack={() => navigate('templates')} />
         : view.name === 'templates'
-        ? <TemplatesList onBack={() => navigate('projects')} onOpen={(id) => navigate('template', id)} />
+        ? <TemplatesList
+            onBack={() => navigate('projects')}
+            onOpen={(id) => navigate('template', id)}
+            onOpenMaster={() => navigate('library')}
+            canEditMaster={isAdmin(session?.user?.email)}
+          />
         : view.name === 'library' && isAdmin(session?.user?.email)
-        ? <LibraryEditor onBack={() => navigate('projects')} />
+        ? <LibraryEditor onBack={() => navigate('templates')} />
         : <ProjectList
             onOpen={(id) => navigate('editor', id)}
-            onOpenLibrary={() => navigate('library')}
             onOpenTemplates={() => navigate('templates')}
             currentEmail={session?.user?.email}
           />
