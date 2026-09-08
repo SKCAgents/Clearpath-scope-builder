@@ -644,8 +644,8 @@ function ProjectInfo({ info, onChange, onChangeType }) {
       sectionHeader('Preliminary Price'),
       field('Price', 'estimate', '$997,972', 'text', onEstimateChange),
       note(range
-        ? `Prints as ${range.rangeLabel} — this figure itself is never shown.`
-        : 'Enter one price. The document prints it as a ±10% budgetary range.'),
+        ? `Prints as the total, with a note beneath it: budgetary range ${range.rangeLabel}.`
+        : 'Prints as the total, with a ±10% budgetary range noted beneath it.'),
 
       sectionHeader('Design Deposit'),
       React.createElement('div', { style: { fontFamily: "'Figtree', sans-serif", fontSize: 10, color: C.goldDark, marginTop: -6, marginBottom: 12, fontStyle: 'italic' } },

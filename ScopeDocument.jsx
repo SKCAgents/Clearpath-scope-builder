@@ -164,22 +164,25 @@ function ScopeDocument({ info, sections, exclusions, allowances, addOns = [], de
 
       React.createElement(Rule),
 
-      // Preliminary budgetary range — the only price the client ever sees.
-      // `info.estimate` is the single figure that was entered, but it is never
-      // rendered: printing the midpoint alongside a band invites the client to
-      // treat it as the quote and the band as padding. It goes to cpPriceRange
-      // and nowhere else. A null range means no usable price was entered, which
-      // suppresses the whole box.
-      range && React.createElement('div', {},
+      // Preliminary price. The figure that was entered is the headline: if the
+      // scope and selections hold, that is what the job costs. The ±10% band
+      // sits under it as a note — the room the price could still move in, not
+      // the quote itself.
+      //
+      // The box shows for any non-empty price (so "TBD" still prints), while
+      // the range note needs a figure that parses — hence the separate `range`
+      // check inside.
+      info.estimate && React.createElement('div', {},
         React.createElement('div', {
           style:{ background:slate, padding:'24px 32px', display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:24 }
         },
           React.createElement('div', {},
-            React.createElement('div', { style:{ fontFamily:"'Figtree', sans-serif", fontSize:9, letterSpacing:'0.2em', textTransform:'uppercase', color:gold, marginBottom:8 } }, 'Preliminary Budgetary Range'),
-            // 30px rather than the 42px a single figure carried: two formatted
-            // amounts plus the en dash would wrap at 8.5in print width.
-            React.createElement('div', { style:{ fontFamily:"'Cormorant Garamond', Georgia, serif", fontWeight:500, fontSize:30, color:offwhite, lineHeight:1 } }, range.rangeLabel),
-            React.createElement('div', { style:{ fontFamily:"'Figtree', sans-serif", fontSize:10, color:'rgba(239,236,232,0.4)', marginTop:4 } },
+            React.createElement('div', { style:{ fontFamily:"'Figtree', sans-serif", fontSize:9, letterSpacing:'0.2em', textTransform:'uppercase', color:gold, marginBottom:8 } }, 'Preliminary Estimated Total'),
+            React.createElement('div', { style:{ fontFamily:"'Cormorant Garamond', Georgia, serif", fontWeight:500, fontSize:42, color:offwhite, lineHeight:1 } }, info.estimate),
+            range && React.createElement('div', { style:{ fontFamily:"'Figtree', sans-serif", fontSize:11, color:'rgba(239,236,232,0.65)', marginTop:8 } },
+              `Budgetary range: ${range.rangeLabel}`
+            ),
+            range && React.createElement('div', { style:{ fontFamily:"'Figtree', sans-serif", fontSize:10, color:'rgba(239,236,232,0.4)', marginTop:4 } },
               window.CP_RANGE_DISCLAIMER
             )
           )

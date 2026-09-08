@@ -262,36 +262,42 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
   }
 
   // ── Estimate ─────────────────────────────────────────────────────────────
-  // One price is entered; the document only ever shows the derived ±10% band.
-  // The raw midpoint must not reach the page, so `info.estimate` is passed
-  // straight to cpPriceRange() and never printed. A null range (blank or
-  // non-numeric price) drops the section entirely.
+  // The entered price is the headline: if the scope and selections hold, that
+  // is the price. The derived ±10% band follows as a note underneath — the room
+  // the figure could still move in.
+  //
+  // The section shows for any non-empty price (so "TBD" still prints); the
+  // range note only appears when the price parses to a number.
   const range = window.cpPriceRange(info.estimate);
-  if (range) {
+  if (info.estimate) {
     sectionsContent.push(sectionHeading('Preliminary Estimate'));
     sectionsContent.push(shadedBox([
       new Paragraph({
         spacing: { after: 80 },
         children: [new TextRun({
-          text: 'PRELIMINARY BUDGETARY RANGE',
+          text: 'PRELIMINARY ESTIMATED TOTAL',
           font: FONT_BODY, size: 18, color: C_LIMESTONE, bold: true, characterSpacing: 60,
         })],
       }),
       new Paragraph({
         spacing: { after: 80 },
         children: [new TextRun({
-          // 44 half-points, not the 72 a single figure used to get: the range
-          // string is roughly twice as long and wraps inside the shaded box at
-          // display size.
-          text: money(range.rangeLabel), font: FONT_HEAD, size: 44, color: C_SLATE,
+          text: money(info.estimate), font: FONT_HEAD, size: 72, color: C_SLATE,
         })],
       }),
-      new Paragraph({
+      ...(range ? [new Paragraph({
+        spacing: { after: 60 },
+        children: [new TextRun({
+          text: `Budgetary range: ${money(range.rangeLabel)}`,
+          font: FONT_BODY, size: 22, color: '555555',
+        })],
+      })] : []),
+      ...(range ? [new Paragraph({
         children: [new TextRun({
           text: window.CP_RANGE_DISCLAIMER,
           font: FONT_BODY, size: 20, color: '888888', italics: true,
         })],
-      }),
+      })] : []),
     ], C_SLATE, C_BG_LIGHT));
   }
 
