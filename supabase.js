@@ -14,7 +14,10 @@
  * Database tables used:
  *   allowed_users    — email allow-list (controls who can access the app)
  *   projects         — saved scope documents
- *   library_sections — custom scope lines added to the master library by users
+ *   library_sections — custom scope lines added to the master library by users,
+ *                      plus two kinds of settings row sharing the same table
+ *                      (ids prefixed '__'): the allowance defaults, and one row
+ *                      per named scope template
  *   library_exclusions — custom exclusion lines added to the master library
  */
 
@@ -39,6 +42,13 @@ const _sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 function _defaultSortOrder(sectionId) {
   const idx = (window.SCOPE_LIBRARY || []).findIndex(s => s.id === sectionId);
   return idx >= 0 ? idx : 999;
+}
+
+// Named scope templates live in library_sections, one row each, marked by this
+// id prefix. See the "Scope templates" section at the bottom of this file.
+const TEMPLATE_PREFIX = '__template_';
+function _isTemplateId(id) {
+  return String(id || '').startsWith(TEMPLATE_PREFIX);
 }
 
 
@@ -209,12 +219,22 @@ window.cpProjectCount = async function () {
 // master library via the "+ lib" button in the editor.
 // These are merged with the hardcoded SCOPE_LIBRARY in index.html so all
 // new projects start with both the defaults and any user additions.
+// Template rows are excluded here. Each one carries a whole scope snapshot as
+// a JSON blob, and this function runs on every project open — pulling every
+// template's blob just to render one project would waste the payload. Templates
+// are listed by name (cpListTemplates) and fetched one at a time on demand.
+// The allowance-defaults row IS returned, since it's small and always needed.
 window.cpListLibrary = async function () {
   const [{ data: sections }, { data: exclusions }] = await Promise.all([
-    _sb.from('library_sections').select('*').order('sort_order'),
+    _sb.from('library_sections').select('*').not('id', 'like', TEMPLATE_PREFIX + '%').order('sort_order'),
     _sb.from('library_exclusions').select('*').order('sort_order'),
   ]);
-  return { sections: sections || [], exclusions: exclusions || [] };
+  // Belt and braces: LIKE treats '_' as a single-character wildcard, so the
+  // server-side filter is slightly looser than the prefix test. Re-check here.
+  return {
+    sections: (sections || []).filter(s => !_isTemplateId(s.id)),
+    exclusions: exclusions || [],
+  };
 };
 
 // Adds a custom scope line to the master library so it appears in all future
@@ -414,6 +434,119 @@ window.cpParseAllowanceDefaults = function (libraryData) {
 
   return parsed.length ? parsed : null;
 };
+
+// ── Scope templates ──────────────────────────────────────────────────────────
+// A template is a named, reusable scope snapshot: the sections and which of
+// their lines are checked, the exclusions, the allowances, the add-ons, and the
+// scope-shaped bits of project info (type and the two durations). It carries no
+// client, address, price or deposit — those belong to a project, not a template.
+//
+// Storage: one library_sections row per template, id '__template_<unique>',
+// title = the template's name, and the whole snapshot as a single JSON string
+// in items[0]. That reuses the one table this app can write to without a schema
+// migration, and the '__' prefix keeps the row out of the scope-section merge
+// (initSections in index.html) and the Master Template editor
+// (buildTemplateView in app.jsx).
+//
+// Copies are one-time. Creating a project from a template deep-copies the
+// snapshot into the project's own data; editing the template afterwards has no
+// effect on projects already created from it, and editing a project never
+// writes back to the template.
+
+// Lists templates by name only — deliberately does NOT select `items`, so the
+// scope blobs stay on the server until one is actually opened.
+// Returns { data: [{ id, title }], error }, alphabetical by name.
+window.cpListTemplates = async function () {
+  const { data, error } = await _sb
+    .from('library_sections')
+    .select('id, title')
+    .like('id', TEMPLATE_PREFIX + '%')
+    .order('title');
+  // LIKE's '_' wildcard makes the server filter slightly loose — re-check the
+  // real prefix here.
+  return { data: (data || []).filter(r => _isTemplateId(r.id)), error };
+};
+
+// Fetches one template's scope snapshot.
+// Returns { data: { id, name, scope }, error }. A row whose blob is missing or
+// corrupt comes back with an error rather than a half-built scope, so the
+// caller can refuse to open it instead of silently creating an empty project.
+window.cpGetTemplate = async function (templateId) {
+  const { data, error } = await _sb
+    .from('library_sections')
+    .select('id, title, items')
+    .eq('id', templateId)
+    .maybeSingle();
+  if (error) return { data: null, error };
+  if (!data)  return { data: null, error: new Error('Template not found.') };
+
+  const raw = (data.items || [])[0];
+  if (!raw) return { data: null, error: new Error('Template "' + data.title + '" has no saved scope.') };
+
+  try {
+    const parsed = JSON.parse(raw);
+    // Accept both the wrapper shape and a bare scope, so a row written by any
+    // future version still opens.
+    const scope = parsed && parsed.scope ? parsed.scope : parsed;
+    return { data: { id: data.id, name: data.title, scope }, error: null };
+  } catch (e) {
+    return { data: null, error: new Error('Template "' + data.title + '" could not be read.') };
+  }
+};
+
+// Creates a new template row. Returns { data: { id, name }, error }.
+// The id embeds a timestamp and a random suffix: unique without a server
+// round-trip, and never reused after a delete (projects don't reference
+// template ids, but the Templates list is keyed on them).
+window.cpCreateTemplate = async function (name, scope) {
+  const id = TEMPLATE_PREFIX + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+  const { error } = await _sb
+    .from('library_sections')
+    .insert({
+      id,
+      title: String(name || 'Untitled Template').trim() || 'Untitled Template',
+      items: [_encodeTemplate(scope)],
+      included_items: [],
+      // Well past any real section, so a template row never disturbs the
+      // section ordering if some query forgets to filter it out.
+      sort_order: 9998,
+    });
+  return { data: error ? null : { id, name }, error };
+};
+
+// Replaces a template's scope snapshot (the Templates editor's auto-save).
+window.cpSaveTemplateScope = async function (templateId, scope) {
+  const { error } = await _sb
+    .from('library_sections')
+    .update({ items: [_encodeTemplate(scope)] })
+    .eq('id', templateId);
+  return { error };
+};
+
+// Renames a template. The scope blob is left alone.
+window.cpRenameTemplate = async function (templateId, name) {
+  const clean = String(name || '').trim();
+  if (!clean) return { error: new Error('A template needs a name.') };
+  const { error } = await _sb
+    .from('library_sections')
+    .update({ title: clean })
+    .eq('id', templateId);
+  return { error };
+};
+
+// Deletes a template. Projects created from it are unaffected — they hold their
+// own copy of the scope.
+window.cpDeleteTemplate = async function (templateId) {
+  const { error } = await _sb.from('library_sections').delete().eq('id', templateId);
+  return { error };
+};
+
+// One JSON string, version-stamped so a later format change can be detected
+// rather than guessed at.
+function _encodeTemplate(scope) {
+  return JSON.stringify({ v: 1, savedAt: new Date().toISOString(), scope: scope || {} });
+}
+
 
 // Writes the admin-set defaults. Replaces the whole list in one row, so a
 // category deleted in the admin card is genuinely gone for future projects.

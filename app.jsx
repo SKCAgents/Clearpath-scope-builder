@@ -136,18 +136,138 @@ function ProjectRow({ project: p, onOpen, onDeleted, canDelete }) {
   );
 }
 
+// Human label for a project type id. Falls back to de-slugging the raw value,
+// so projects saved under the older type list still read sensibly.
+function typeLabelOf(typeId) {
+  if (!typeId) return '—';
+  return projectTypeLabel(typeId) || String(typeId).replace(/_/g, ' ');
+}
+
+function shortDate(value) {
+  if (!value) return '—';
+  return new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// Picker for "Copy from a past project". Past projects used to be individual
+// rows in the Start From dropdown, which doesn't survive having more than a
+// handful of them — this searches by client and project name, filters by type,
+// and shows the date so the right one is identifiable at a glance.
+//
+// projects is the list already loaded by ProjectList, so opening this costs no
+// extra network call.
+function PastProjectPicker({ projects = [], onPick, onClose }) {
+  const [search, setSearch] = React.useState('');
+  const [type, setType] = React.useState('');
+
+  // Only offer types that actually occur in the list — a filter that can return
+  // nothing is just a trap.
+  const types = [...new Set(projects.map(p => p.project_type).filter(Boolean))]
+    .sort((a, b) => typeLabelOf(a).localeCompare(typeLabelOf(b)));
+
+  const q = search.trim().toLowerCase();
+  const shown = projects
+    .filter(p => !type || p.project_type === type)
+    .filter(p => !q || [p.name, p.client_name].some(f => (f || '').toLowerCase().includes(q)))
+    .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));   // most recent first
+
+  const inputStyle = { fontFamily: "'Figtree', sans-serif", fontSize: 13, border: `1px solid ${C.border}`, padding: '8px 12px', color: C.slate, outline: 'none', background: 'white' };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(63,78,90,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 120 }}>
+      <div style={{ background: 'white', width: 640, maxWidth: '92vw', maxHeight: '82vh', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ padding: '24px 28px 0' }}>
+          <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 21, color: C.slate }}>Copy from a past project</div>
+          <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, color: C.goldDark, marginTop: 6, marginBottom: 16 }}>
+            The scope is copied in as a starting point. The project you pick is not changed.
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+            <input
+              autoFocus
+              placeholder="Search by client or project name…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={{ ...inputStyle, flex: 1 }}
+            />
+            <select value={type} onChange={e => setType(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
+              <option value="">All types</option>
+              {types.map(t => <option key={t} value={t}>{typeLabelOf(t)}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div style={{ flex: 1, overflow: 'auto', borderTop: `1px solid ${C.border}` }}>
+          {shown.length === 0 ? (
+            <div style={{ padding: 40, textAlign: 'center', fontFamily: "'Figtree', sans-serif", fontSize: 12, color: C.goldDark }}>
+              No matching projects.
+            </div>
+          ) : shown.map(p => (
+            <div
+              key={p.id}
+              onClick={() => onPick(p)}
+              style={{ display: 'grid', gridTemplateColumns: '1fr 130px 110px', gap: 10, alignItems: 'center', padding: '11px 28px', cursor: 'pointer', borderBottom: `1px solid ${C.border}` }}
+              onMouseEnter={e => e.currentTarget.style.background = C.bgLight}
+              onMouseLeave={e => e.currentTarget.style.background = 'white'}
+            >
+              <div>
+                <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 13, color: C.slate, fontWeight: 500 }}>{p.name || '(Untitled)'}</div>
+                <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, color: C.goldDark }}>{p.client_name || '—'}</div>
+              </div>
+              <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, color: C.goldDark, textTransform: 'capitalize' }}>{typeLabelOf(p.project_type)}</div>
+              <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, color: C.gold, textAlign: 'right' }}>{shortDate(p.updated_at)}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ padding: '14px 28px', display: 'flex', justifyContent: 'flex-end', borderTop: `1px solid ${C.border}` }}>
+          <button onClick={onClose} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', background: 'none', color: C.goldDark, border: `1px solid ${C.border}`, padding: '9px 18px', cursor: 'pointer' }}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Modal dialog for creating a new project.
 // Only the project name is required. After creation, opens the editor immediately.
 //
-// "Start from" lets the new project inherit an existing project's whole scope
-// (sections, allowances, add-ons, exclusions, estimate, schedule) — for jobs
-// that are near-copies of a previous one. The source project is left untouched.
+// "Start From" decides where the new project's scope comes from:
+//   Master              — the master library, nothing checked (the default)
+//   a named template    — a one-time copy of that template's scope
+//   a past project      — a one-time copy of that project's scope, chosen
+//                         through PastProjectPicker
+// Copies are snapshots: editing the template or the source project later does
+// not reach into this new project, and vice versa.
+//
 // existingProjects is the already-loaded list from ProjectList, so opening the
 // modal costs no extra network call.
 function NewProjectModal({ onClose, onCreate, existingProjects = [] }) {
   const [fields, setFields] = React.useState({ name: '', client_name: '', address: '', project_type: '' });
-  const [copyFrom, setCopyFrom] = React.useState('');   // '' = start blank
+  // 'master' | 'tmpl:<templateId>' | 'project'
+  const [startFrom, setStartFrom] = React.useState('master');
+  const [pickedProject, setPickedProject] = React.useState(null);
+  const [showPicker, setShowPicker] = React.useState(false);
+  const [templates, setTemplates] = React.useState([]);
   const [saving, setSaving] = React.useState(false);
+
+  // Templates are listed by name only — the scope blob is fetched on submit.
+  React.useEffect(() => {
+    let cancelled = false;
+    function tryLoad() {
+      if (typeof window.cpListTemplates !== 'function') { setTimeout(tryLoad, 100); return; }
+      cpListTemplates()
+        .then(({ data }) => { if (!cancelled) setTemplates(data || []); })
+        .catch(() => { if (!cancelled) setTemplates([]); });
+    }
+    tryLoad();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Choosing the "past project" option opens the picker instead of settling the
+  // dropdown — the dropdown only shows a real choice once one is picked.
+  function onStartFromChange(value) {
+    if (value === 'project') { setShowPicker(true); return; }
+    setStartFrom(value);
+    setPickedProject(null);
+  }
 
   // Helper that returns an onChange handler for a given field name
   function set(key) {
@@ -159,33 +279,64 @@ function NewProjectModal({ onClose, onCreate, existingProjects = [] }) {
     if (!fields.name.trim()) return;
     setSaving(true);
 
-    // Copying from an existing project: cpCopyProject pulls the source's full
-    // scope data and re-stamps the identifying fields with what was typed here.
-    // Otherwise: seed the project's scope data so the build view's Project tab is
-    // pre-filled from what was entered here — no need to re-type name/client/
-    // address. App merges this over DEFAULT_INFO, so other defaults still apply.
-    // When copying, the project type is inherited from the source along with
-    // its scope — the dropdown is hidden in that case, and project_type is left
-    // out of the payload so cpCopyProject falls back to the source's value.
-    const { data, error } = copyFrom
-      ? await cpCopyProject(copyFrom, { name: fields.name, client_name: fields.client_name, address: fields.address })
-      : await cpCreateProject({
-          ...fields,
-          data: {
-            info: {
-              projectName: fields.name,
-              clientName:  fields.client_name,
-              address:     fields.address,
-              // The type drives which scope template the editor loads on first
-              // open (see initSections), so it has to live in the data blob too,
-              // not just in the project_type column.
-              projectType: fields.project_type,
-              // Prepared date defaults to the current month + year (e.g. "June 2026").
-              // Editable later in the Project tab; frozen at creation so it doesn't drift.
-              date:        new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
-            },
+    // The identifying fields every route stamps onto the new project, so the
+    // Project tab is pre-filled from what was typed here.
+    const identity = {
+      projectName: fields.name,
+      clientName:  fields.client_name,
+      address:     fields.address,
+      // Prepared date defaults to the current month + year (e.g. "June 2026").
+      // Editable later in the Project tab; frozen at creation so it doesn't drift.
+      date:        new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+    };
+
+    let result;
+
+    if (startFrom === 'project' && pickedProject) {
+      // cpCopyProject pulls the source's full scope data and re-stamps the
+      // identifying fields. The type comes with the scope, so project_type is
+      // left out of the payload and cpCopyProject falls back to the source's.
+      result = await cpCopyProject(pickedProject.id, {
+        name: fields.name, client_name: fields.client_name, address: fields.address,
+      });
+
+    } else if (startFrom.startsWith('tmpl:')) {
+      // A template is a one-time copy: fetch its snapshot, deep-copy it into
+      // this project's own data (stateFromScope), and stamp the identity on top.
+      const templateId = startFrom.slice(5);
+      const { data: tmpl, error: readErr } = await cpGetTemplate(templateId);
+      if (readErr || !tmpl) {
+        setSaving(false);
+        alert('Could not read that template: ' + ((readErr && readErr.message) || 'not found'));
+        return;
+      }
+      const state = stateFromScope(tmpl.scope, identity);
+      result = await cpCreateProject({
+        name:         fields.name,
+        client_name:  fields.client_name,
+        address:      fields.address,
+        project_type: (tmpl.scope && tmpl.scope.info && tmpl.scope.info.projectType) || '',
+        data:         state,
+      });
+
+    } else {
+      // Master: no scope data seeded, so the editor builds it from the library
+      // on first open — the project type decides what starts checked.
+      result = await cpCreateProject({
+        ...fields,
+        data: {
+          info: {
+            ...identity,
+            // The type drives which scope template the editor loads on first
+            // open (see initSections), so it has to live in the data blob too,
+            // not just in the project_type column.
+            projectType: fields.project_type,
           },
-        });
+        },
+      });
+    }
+
+    const { data, error } = result;
     if (error) { setSaving(false); alert('Error: ' + error.message); return; }
     // Pass the new project's ID up so the parent can navigate to the editor
     onCreate(data.id);
@@ -200,26 +351,44 @@ function NewProjectModal({ onClose, onCreate, existingProjects = [] }) {
       <div style={{ background: 'white', padding: 36, width: 480, maxWidth: '90vw' }}>
         <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 22, color: C.slate, marginBottom: 28 }}>New Project</div>
         <form onSubmit={handleSubmit}>
-          {/* Copy an existing project's scope as the starting point. Only shown
-              once there is at least one project to copy from. */}
-          {existingProjects.length > 0 && (
-            <div style={{ marginBottom: 18, paddingBottom: 18, borderBottom: `1px solid ${C.border}` }}>
-              <label style={labelStyle}>Start From</label>
-              <select value={copyFrom} onChange={e => setCopyFrom(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
-                <option value="">Blank scope (master template)</option>
-                {existingProjects.map(p => (
-                  <option key={p.id} value={p.id}>
-                    Copy of: {p.name || '(Untitled)'}{p.client_name ? ` — ${p.client_name}` : ''}
-                  </option>
-                ))}
-              </select>
-              {copyFrom && (
-                <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, lineHeight: 1.5, color: C.goldDark, marginTop: 8 }}>
-                  Copies that project's sections, allowances, add-ons, exclusions, estimate and schedule. The name, client and address below replace the originals, and the prepared date resets to this month. The original project is not changed.
-                </div>
+          {/* Where the new project's scope comes from. The templates group is
+              hidden until at least one template exists, and the past-project
+              option is hidden until there is a past project to copy. */}
+          <div style={{ marginBottom: 18, paddingBottom: 18, borderBottom: `1px solid ${C.border}` }}>
+            <label style={labelStyle}>Start From</label>
+            <select
+              value={pickedProject ? 'picked' : startFrom}
+              onChange={e => onStartFromChange(e.target.value)}
+              style={{ ...inputStyle, cursor: 'pointer' }}
+            >
+              <option value="master">Master (default)</option>
+              {templates.length > 0 && (
+                <optgroup label="── Templates ──">
+                  {templates.map(t => (
+                    <option key={t.id} value={'tmpl:' + t.id}>{t.title}</option>
+                  ))}
+                </optgroup>
               )}
-            </div>
-          )}
+              {existingProjects.length > 0 && (
+                <optgroup label="────────────">
+                  {/* Shown as the current value once a project has been picked,
+                      so the dropdown reflects the actual choice. */}
+                  {pickedProject && <option value="picked">Copy of: {pickedProject.name || '(Untitled)'}</option>}
+                  <option value="project">Copy from a past project…</option>
+                </optgroup>
+              )}
+            </select>
+            {pickedProject && (
+              <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, lineHeight: 1.5, color: C.goldDark, marginTop: 8 }}>
+                Copies that project's sections, allowances, add-ons, exclusions, estimate and schedule. The name, client and address below replace the originals, and the prepared date resets to this month. The original project is not changed.
+              </div>
+            )}
+            {startFrom.startsWith('tmpl:') && (
+              <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, lineHeight: 1.5, color: C.goldDark, marginTop: 8 }}>
+                Copies that template's scope in as a starting point. It's a one-time copy — later edits to the template won't change this project.
+              </div>
+            )}
+          </div>
           <div style={{ marginBottom: 18 }}>
             <label style={labelStyle}>Project Name *</label>
             <input required value={fields.name} onChange={set('name')} style={inputStyle} autoFocus />
@@ -234,9 +403,10 @@ function NewProjectModal({ onClose, onCreate, existingProjects = [] }) {
           </div>
           {/* Project type selects the scope template the new project starts
               from (PROJECT_TEMPLATES in ScopeLibrary.jsx) — the sections it
-              lists start with their lines checked. Hidden when copying an
-              existing project, which brings its own scope and its own type. */}
-          {!copyFrom && (
+              lists start with their lines checked. Only relevant when starting
+              from Master; a template or a past project brings its own scope and
+              its own type. */}
+          {startFrom === 'master' && !pickedProject && (
             <div style={{ marginBottom: 28 }}>
               <label style={labelStyle}>Project Type</label>
               <select value={fields.project_type} onChange={set('project_type')} style={{ ...inputStyle, cursor: 'pointer' }}>
@@ -253,11 +423,19 @@ function NewProjectModal({ onClose, onCreate, existingProjects = [] }) {
           <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
             <button type="button" onClick={onClose} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', background: 'none', color: C.goldDark, border: `1px solid ${C.border}`, padding: '9px 18px', cursor: 'pointer' }}>Cancel</button>
             <button type="submit" disabled={saving} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', background: C.slate, color: C.offwhite, border: 'none', padding: '9px 20px', cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>
-              {saving ? (copyFrom ? 'Copying…' : 'Creating…') : (copyFrom ? 'Create Copy' : 'Create Project')}
+              {saving ? (pickedProject ? 'Copying…' : 'Creating…') : (pickedProject ? 'Create Copy' : 'Create Project')}
             </button>
           </div>
         </form>
       </div>
+      {/* Sits above the New Project dialog until a project is picked or cancelled */}
+      {showPicker && (
+        <PastProjectPicker
+          projects={existingProjects}
+          onPick={p => { setPickedProject(p); setStartFrom('project'); setShowPicker(false); }}
+          onClose={() => setShowPicker(false)}
+        />
+      )}
     </div>
   );
 }
@@ -265,7 +443,7 @@ function NewProjectModal({ onClose, onCreate, existingProjects = [] }) {
 // The main project dashboard. Shows all projects with search and sort.
 // Polls for supabase.js to finish loading before making the first DB call,
 // then fetches projects. Search filters client-side since totals are small.
-function ProjectList({ onOpen, onOpenLibrary, currentEmail }) {
+function ProjectList({ onOpen, onOpenLibrary, onOpenTemplates, currentEmail }) {
   const canDelete = isAdmin(currentEmail);
   const canEditTemplate = isAdmin(currentEmail);
   // null = still loading; [] = loaded but empty; [...] = loaded with projects
@@ -319,6 +497,11 @@ function ProjectList({ onOpen, onOpenLibrary, currentEmail }) {
         <img src={(document.getElementById('__logo_icon') || {}).src || 'assets/ClearPath-Icon-Limestone.png'} alt="ClearPath" style={{ height: 32 }} />
         <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 8, letterSpacing: '0.28em', textTransform: 'uppercase', color: C.gold }}>Scope Builder</div>
         <div style={{ flex: 1 }} />
+        {/* Named scope templates — available to everyone, since anyone can
+            save a project's scope as one. */}
+        <button onClick={onOpenTemplates} title="Reusable scopes to start a project from" style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', fontWeight: 400, background: 'none', color: C.gold, border: '1px solid rgba(195,189,177,0.5)', padding: '6px 14px', cursor: 'pointer' }}>
+          Templates
+        </button>
         {/* Master Template editor — admins only (edits the shared scope library) */}
         {canEditTemplate && (
           <button onClick={onOpenLibrary} title="Edit the master scope library that new projects start from" style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', fontWeight: 400, background: 'none', color: C.gold, border: '1px solid rgba(195,189,177,0.5)', padding: '6px 14px', cursor: 'pointer' }}>
@@ -506,6 +689,19 @@ function ProjectEditor({ projectId, onBack }) {
     );
   }
 
+  // "Save as Template" — turns the scope currently in the editor into a named
+  // template. A one-time copy: the project keeps working exactly as before, and
+  // later edits to either side don't cross over.
+  async function saveAsTemplate(scope) {
+    const suggested = project.name ? project.name + ' Template' : '';
+    const name = window.prompt('Name this template:', suggested);
+    if (name === null) return;
+    if (!name.trim()) { alert('A template needs a name.'); return; }
+    const { error } = await cpCreateTemplate(name.trim(), scope);
+    if (error) { alert('Could not save the template: ' + error.message); return; }
+    alert('Template "' + name.trim() + '" saved. It will show up under Start From on new projects.');
+  }
+
   // Render the full scope builder UI (App is defined in index.html).
   // We pass the saved state as initialState and wire up onChange for auto-save.
   return React.createElement(App, {
@@ -514,6 +710,7 @@ function ProjectEditor({ projectId, onBack }) {
     libraryData: library,
     saveStatus,
     onBack,
+    onSaveAsTemplate: saveAsTemplate,
   });
 }
 
@@ -1098,6 +1295,228 @@ function LibraryEditor({ onBack }) {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TEMPLATES
+//
+// A template is a named, reusable scope snapshot — the sections and which of
+// their lines are checked, the exclusions, the allowances and the add-ons.
+//
+// Templates are separate from the Master Template screen. Master is the
+// library every project and every new template is built from; a template is one
+// saved arrangement of it. Editing a template touches neither master nor any
+// project already created from it, because every copy is a one-time snapshot.
+//
+// The app ships with no templates. The list is empty until someone creates one,
+// either here or with "Save as Template" in a project.
+//
+// Storage is one library_sections row per template — see the "Scope templates"
+// section of supabase.js.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// The Templates list screen: create, rename, edit, delete.
+function TemplatesList({ onBack, onOpen }) {
+  const [templates, setTemplates] = React.useState(null);   // null = loading
+  const [library, setLibrary] = React.useState(null);       // needed to seed a new template from master
+  const [busy, setBusy] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    function tryLoad() {
+      if (typeof window.cpListTemplates !== 'function') { setTimeout(tryLoad, 100); return; }
+      Promise.all([cpListTemplates(), cpListLibrary()])
+        .then(([{ data }, lib]) => { if (!cancelled) { setTemplates(data || []); setLibrary(lib); } })
+        .catch(() => { if (!cancelled) { setTemplates([]); setLibrary({ sections: [], exclusions: [] }); } });
+    }
+    tryLoad();
+    return () => { cancelled = true; };
+  }, []);
+
+  function reload() {
+    cpListTemplates().then(({ data }) => setTemplates(data || [])).catch(() => {});
+  }
+
+  // A new template starts as a copy of master — every library section present
+  // with nothing checked — then gets named and edited.
+  async function create() {
+    const name = window.prompt('Name this template:', '');
+    if (name === null) return;                  // cancelled
+    if (!name.trim()) { alert('A template needs a name.'); return; }
+    setBusy(true);
+    const { data, error } = await cpCreateTemplate(name.trim(), masterScope(library));
+    setBusy(false);
+    if (error) { alert('Could not create the template: ' + error.message); return; }
+    onOpen(data.id);                            // straight into editing it
+  }
+
+  async function rename(t) {
+    const name = window.prompt('Rename template:', t.title);
+    if (name === null || name.trim() === t.title) return;
+    const { error } = await cpRenameTemplate(t.id, name);
+    if (error) { alert('Could not rename: ' + error.message); return; }
+    reload();
+  }
+
+  async function remove(t) {
+    if (!window.confirm(`Delete the template "${t.title}"?\n\nProjects already created from it are not affected — they hold their own copy of the scope.`)) return;
+    const { error } = await cpDeleteTemplate(t.id);
+    if (error) { alert('Could not delete: ' + error.message); return; }
+    reload();
+  }
+
+  const actionBtn = { fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', background: 'none', color: C.goldDark, border: `1px solid ${C.border}`, padding: '5px 10px', cursor: 'pointer' };
+
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: C.bgLight }}>
+      {/* Top bar */}
+      <div style={{ background: C.slate, height: 52, display: 'flex', alignItems: 'center', padding: '0 24px', gap: 16, flexShrink: 0 }}>
+        <button onClick={onBack} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(239,236,232,0.55)', padding: '0 8px 0 0' }}>← Projects</button>
+        <div style={{ width: 1, height: 20, background: 'rgba(239,236,232,0.15)' }} />
+        <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.22em', textTransform: 'uppercase', color: C.gold, fontWeight: 500 }}>Templates</div>
+        <div style={{ flex: 1 }} />
+        <button onClick={create} disabled={busy || library === null} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', fontWeight: 500, background: C.offwhite, color: C.slate, border: 'none', padding: '7px 16px', cursor: (busy || library === null) ? 'default' : 'pointer', opacity: (busy || library === null) ? 0.6 : 1 }}>
+          {busy ? 'Creating…' : '+ New Template'}
+        </button>
+      </div>
+
+      {/* Body */}
+      <div style={{ flex: 1, overflow: 'auto', padding: 24 }}>
+        <div style={{ maxWidth: 860, margin: '0 auto' }}>
+          <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, color: C.goldDark, lineHeight: 1.6, marginBottom: 20 }}>
+            Reusable scopes to start a project from. A new template begins as a copy of the master library, which you then edit. Editing a template does <strong>not</strong> change master, and does not change any project already created from it.
+          </div>
+
+          {templates === null ? (
+            <div style={{ textAlign: 'center', color: C.goldDark, padding: 64, fontFamily: "'Figtree', sans-serif", fontSize: 13 }}>Loading templates…</div>
+          ) : templates.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 64 }}>
+              <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 20, color: C.slate, marginBottom: 8 }}>No templates yet.</div>
+              <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 12, color: C.goldDark, marginBottom: 20 }}>
+                Create one here, or open a project and use “Save as Template”.
+              </div>
+              <button onClick={create} disabled={library === null} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', background: C.slate, color: C.offwhite, border: 'none', padding: '10px 20px', cursor: 'pointer' }}>
+                Create Your First Template
+              </button>
+            </div>
+          ) : (
+            <div style={{ background: 'white', border: `1px solid ${C.border}` }}>
+              {templates.map((t, i) => (
+                <div
+                  key={t.id}
+                  style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 18px', borderTop: i === 0 ? 'none' : `1px solid ${C.border}`, borderLeft: `3px solid ${C.gold}` }}
+                >
+                  <div onClick={() => onOpen(t.id)} style={{ flex: 1, cursor: 'pointer', fontFamily: "'Figtree', sans-serif", fontSize: 13, color: C.slate, fontWeight: 500 }}>
+                    {t.title}
+                  </div>
+                  <button onClick={() => onOpen(t.id)} style={actionBtn}>Edit</button>
+                  <button onClick={() => rename(t)} style={actionBtn}>Rename</button>
+                  <button onClick={() => remove(t)} style={{ ...actionBtn, color: C.magnolia }}>Delete</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Editing one template's scope. Deliberately the same editor a project uses —
+// App in templateMode — so the sections, exclusions and allowances behave
+// identically to what the estimator already knows. The project-only chrome
+// (identity fields, price, schedule, exports, design drawings) is hidden.
+//
+// Auto-saves on the same debounce as a project, writing only the scope back to
+// the template row.
+function TemplateEditor({ templateId, onBack }) {
+  const [template, setTemplate] = React.useState(null);   // { id, name, scope }
+  const [library, setLibrary] = React.useState(null);
+  const [saveStatus, setSaveStatus] = React.useState('saved');
+  const [loadError, setLoadError] = React.useState(null);
+
+  const debounceRef = React.useRef(null);
+  const pendingRef = React.useRef(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    function tryLoad() {
+      if (typeof window.cpGetTemplate !== 'function') { setTimeout(tryLoad, 100); return; }
+      Promise.all([cpGetTemplate(templateId), cpListLibrary()])
+        .then(([{ data, error }, lib]) => {
+          if (cancelled) return;
+          if (error || !data) { setLoadError((error && error.message) || 'Template not found.'); return; }
+          setTemplate(data);
+          setLibrary(lib);
+        })
+        .catch(err => { if (!cancelled) setLoadError(err.message); });
+    }
+    tryLoad();
+    return () => { cancelled = true; };
+  }, [templateId]);
+
+  // Flush a pending save if the tab is closed or hidden mid-debounce.
+  React.useEffect(() => {
+    function flush() {
+      if (pendingRef.current) cpSaveTemplateScope(templateId, pendingRef.current);
+    }
+    function onVisibilityChange() { if (document.hidden) flush(); }
+    window.addEventListener('beforeunload', flush);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('beforeunload', flush);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [templateId]);
+
+  function handleChange(state) {
+    // Only the scope is stored — scopeFromState drops the project-only fields.
+    const scope = scopeFromState(state);
+    pendingRef.current = scope;
+    setSaveStatus('pending');
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      setSaveStatus('saving');
+      const { error } = await cpSaveTemplateScope(templateId, scope);
+      pendingRef.current = null;
+      setSaveStatus(error ? 'error' : 'saved');
+    }, 1500);
+  }
+
+  async function rename() {
+    const name = window.prompt('Rename template:', template.name);
+    if (name === null || !name.trim() || name.trim() === template.name) return;
+    const { error } = await cpRenameTemplate(templateId, name);
+    if (error) { alert('Could not rename: ' + error.message); return; }
+    setTemplate(t => ({ ...t, name: name.trim() }));
+  }
+
+  if (loadError) {
+    return (
+      <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: C.bgLight, gap: 14 }}>
+        <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 13, color: C.magnolia }}>{loadError}</div>
+        <button onClick={onBack} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', background: C.slate, color: C.offwhite, border: 'none', padding: '9px 18px', cursor: 'pointer' }}>← Templates</button>
+      </div>
+    );
+  }
+
+  if (!template || !library) {
+    return (
+      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.bgLight }}>
+        <div style={{ fontFamily: "'Figtree', sans-serif", color: C.goldDark, fontSize: 13 }}>Loading template…</div>
+      </div>
+    );
+  }
+
+  return React.createElement(App, {
+    initialState: stateFromScope(template.scope),
+    onChange: handleChange,
+    libraryData: library,
+    saveStatus,
+    onBack,
+    templateMode: { name: template.name, onRename: rename },
+  });
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MIGRATION MODAL
 // One-time helper for users who have scope data saved in localStorage from
 // a previous version of the app (before database storage was added).
@@ -1343,9 +1762,18 @@ function Root() {
           non-admin who lands on ?view=library falls through to the project list. */}
       {view.name === 'editor' && view.id
         ? <ProjectEditor projectId={view.id} onBack={() => navigate('projects')} />
+        : view.name === 'template' && view.id
+        ? <TemplateEditor templateId={view.id} onBack={() => navigate('templates')} />
+        : view.name === 'templates'
+        ? <TemplatesList onBack={() => navigate('projects')} onOpen={(id) => navigate('template', id)} />
         : view.name === 'library' && isAdmin(session?.user?.email)
         ? <LibraryEditor onBack={() => navigate('projects')} />
-        : <ProjectList onOpen={(id) => navigate('editor', id)} onOpenLibrary={() => navigate('library')} currentEmail={session?.user?.email} />
+        : <ProjectList
+            onOpen={(id) => navigate('editor', id)}
+            onOpenLibrary={() => navigate('library')}
+            onOpenTemplates={() => navigate('templates')}
+            currentEmail={session?.user?.email}
+          />
       }
     </>
   );

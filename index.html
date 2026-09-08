@@ -244,6 +244,64 @@ function applyTemplate(prevSections, libraryData, projectType) {
 }
 
 
+// ── Scope snapshots (templates) ───────────────────────────────────────────────
+// A template is a named scope snapshot. These three functions are the only
+// place that decides what a snapshot contains, and they're used by the
+// Templates screens in app.jsx as well as by App itself.
+//
+// A snapshot holds the scope: the sections with their check marks, the
+// exclusions, the allowances, the add-ons, and the scope-shaped parts of info
+// (project type and the two durations). It deliberately does NOT hold the
+// client, address, prepared date, description, price or deposit — those belong
+// to a project. Uploaded design drawings are left out too: they're photos of
+// one job's plans, not reusable scope.
+
+// The fields of `info` a template carries.
+const TEMPLATE_INFO_KEYS = ['projectType', 'designWeeks', 'constructionWeeks'];
+
+// Pulls a snapshot out of a live editor state.
+function scopeFromState(state) {
+  const info = {};
+  TEMPLATE_INFO_KEYS.forEach(k => {
+    if (state?.info && state.info[k] !== undefined) info[k] = state.info[k];
+  });
+  return {
+    info,
+    sections:   state?.sections   || [],
+    exclusions: state?.exclusions || [],
+    allowances: state?.allowances || [],
+    addOns:     state?.addOns     || [],
+  };
+}
+
+// Turns a snapshot back into the initialState App expects. Deep-copied, because
+// a template is a one-time copy: the new project must not share array or object
+// references with the snapshot it came from.
+function stateFromScope(scope, extraInfo) {
+  const copy = JSON.parse(JSON.stringify(scope || {}));
+  return {
+    info:       { ...(copy.info || {}), ...(extraInfo || {}) },
+    sections:   copy.sections   || [],
+    exclusions: copy.exclusions || [],
+    allowances: copy.allowances || [],
+    addOns:     copy.addOns     || [],
+  };
+}
+
+// The snapshot a brand-new template starts from: exactly what a new project
+// gets when it starts from Master — every library section present with nothing
+// checked, the standard exclusions, and the allowance checklist at its defaults.
+function masterScope(libraryData) {
+  return {
+    info:       { projectType: '', designWeeks: CP_DEFAULT_DESIGN_WEEKS, constructionWeeks: CP_DEFAULT_CONSTRUCTION_WEEKS },
+    sections:   initSections(libraryData, ''),
+    exclusions: initExclusions(libraryData),
+    allowances: initAllowances(libraryData),
+    addOns:     [],
+  };
+}
+
+
 // ── Default values ────────────────────────────────────────────────────────────
 
 // The allowance checklist every project starts with — one entry per category in
@@ -354,7 +412,11 @@ const DEFAULT_INFO = {
 //   libraryData  — scope library data fetched from the database
 //   saveStatus   — 'saved' | 'saving' | 'pending' | 'error' (shown in the top bar)
 //   onBack       — called when the user clicks "← Projects" to return to the list
-function App({ initialState, onChange, libraryData, saveStatus, onBack }) {
+// templateMode — set when App is editing a named scope template rather than a
+// project: { name, onRename }. In that mode the document-specific chrome is
+// hidden (no PDF/.docx export, no project info fields, no design drawings),
+// since a template has no client, price or dates to print.
+function App({ initialState, onChange, libraryData, saveStatus, onBack, templateMode, onSaveAsTemplate }) {
   const [tab, setTab] = React.useState('build');
   // Merge saved/seeded info over the defaults: a newly created project carries
   // the name/client/address entered in the New Project dialog, and any field it
@@ -483,9 +545,19 @@ function App({ initialState, onChange, libraryData, saveStatus, onBack }) {
     // Back to projects
     onBack && React.createElement('button', {
       onClick: onBack,
+      key: 'back',
       style: { fontFamily:"'Figtree',sans-serif", fontSize:10, letterSpacing:'0.12em', textTransform:'uppercase', fontWeight:400, background:'none', border:'none', cursor:'pointer', color:'rgba(239,236,232,0.55)', padding:'0 8px 0 0', display:'flex', alignItems:'center', gap:4 }
-    }, '← Projects'),
+    }, templateMode ? '← Templates' : '← Projects'),
     onBack && React.createElement('div', { style:{ width:1, height:20, background:'rgba(239,236,232,0.15)' } }),
+    // Which template is being edited, with rename in reach. Only in template mode.
+    templateMode && React.createElement('div', { key:'tname', style:{ display:'flex', alignItems:'center', gap:8 } },
+      React.createElement('span', { style:{ fontFamily:"'Figtree',sans-serif", fontSize:9, letterSpacing:'0.2em', textTransform:'uppercase', color:'rgba(239,236,232,0.45)' } }, 'Template'),
+      React.createElement('span', { style:{ fontFamily:"'Cormorant Garamond',serif", fontSize:17, color:'#EFECE8' } }, templateMode.name),
+      templateMode.onRename && React.createElement('button', {
+        onClick: templateMode.onRename,
+        style:{ fontFamily:"'Figtree',sans-serif", fontSize:9, letterSpacing:'0.12em', textTransform:'uppercase', background:'none', color:'rgba(239,236,232,0.55)', border:'1px solid rgba(239,236,232,0.25)', padding:'4px 8px', cursor:'pointer' }
+      }, 'Rename')
+    ),
     // Logo
     React.createElement('div', { style:{ display:'flex', alignItems:'center', gap:12 } },
       React.createElement('img', {
@@ -514,7 +586,9 @@ function App({ initialState, onChange, libraryData, saveStatus, onBack }) {
       }, t === 'build' ? '← Build' : 'Preview →')
     ),
     React.createElement('div', { style:{ width:1, height:20, background:'rgba(239,236,232,0.2)' } }),
-    React.createElement('button', {
+    // Exports are project-only: a template has no client, price or dates to print.
+    !templateMode && React.createElement('button', {
+      key: 'pdf',
       onClick: () => {
         setTab('preview');
         setTimeout(() => {
@@ -556,7 +630,8 @@ ${fontStyles}
       },
       style:{ fontFamily:"'Figtree',sans-serif", fontSize:10, letterSpacing:'0.15em', textTransform:'uppercase', fontWeight:500, background:'#EFECE8', color:C.slate, border:'none', padding:'7px 16px', cursor:'pointer' }
     }, 'Export PDF'),
-    React.createElement('button', {
+    !templateMode && React.createElement('button', {
+      key: 'docx',
       onClick: async () => {
         try {
           await window.generateScopeDocx({ info, sections, exclusions, allowances, addOns, designDrawings });
@@ -568,7 +643,16 @@ ${fontStyles}
       title: 'Download as .docx — open in Google Docs to share/comment',
       style:{ fontFamily:"'Figtree',sans-serif", fontSize:10, letterSpacing:'0.15em', textTransform:'uppercase', fontWeight:500, background:'transparent', color:'#EFECE8', border:'1px solid rgba(239,236,232,0.4)', padding:'6px 14px', cursor:'pointer' }
     }, 'Download .docx'),
+    // Turns the scope in front of you into a reusable named template. A
+    // one-time copy — later edits to either side don't cross over.
+    !templateMode && onSaveAsTemplate && React.createElement('button', {
+      key: 'saveTmpl',
+      onClick: () => onSaveAsTemplate(scopeFromState({ info, sections, exclusions, allowances, addOns })),
+      title: 'Save this scope as a reusable template',
+      style:{ fontFamily:"'Figtree',sans-serif", fontSize:10, letterSpacing:'0.15em', textTransform:'uppercase', fontWeight:400, background:'transparent', color:'#EFECE8', border:'1px solid rgba(239,236,232,0.4)', padding:'6px 14px', cursor:'pointer' }
+    }, 'Save as Template'),
     React.createElement('button', {
+      key: 'reset',
       onClick: () => { if (confirm('Reset everything to a blank scope?')) { setSections(initSections(libraryData, '')); setExclusions(initExclusions(libraryData)); setInfo(DEFAULT_INFO); setAllowances(initAllowances(libraryData)); setAddOns([]); } },
       style:{ fontFamily:"'Figtree',sans-serif", fontSize:10, letterSpacing:'0.15em', textTransform:'uppercase', fontWeight:400, background:'none', color:'rgba(239,236,232,0.4)', border:'1px solid rgba(239,236,232,0.2)', padding:'6px 12px', cursor:'pointer' }
     }, 'Reset')
@@ -584,7 +668,10 @@ ${fontStyles}
     },
       // Tabs
       React.createElement('div', { style:{ display:'flex', borderBottom:`1px solid ${C.border}` } },
-        [['sections','Sections'],['info','Project']].map(([key,label]) =>
+        // A template has no project details to fill in, so its second tab
+        // carries just the allowances — the one part of that panel that is
+        // genuinely reusable scope.
+        (templateMode ? [['sections','Sections'],['info','Allowances']] : [['sections','Sections'],['info','Project']]).map(([key,label]) =>
           React.createElement('button', {
             key, onClick:()=>setSideTab(key),
             style:{
@@ -599,10 +686,12 @@ ${fontStyles}
       ),
       sideTab === 'info'
         ? React.createElement('div', { style:{flex:1,overflow:'auto'} },
-            React.createElement(ProjectInfo, { info, onChange: setInfo, onChangeType: changeProjectType }),
-            React.createElement(AllowancesPanel, { allowances, onChange: setAllowances }),
-            React.createElement(AddOnsPanel, { addOns, onChange: setAddOns }),
-            React.createElement(DesignDrawingsPanel, { drawings: designDrawings, onChange: setDesignDrawings })
+            // Project-only fields: identity, price, deposit, schedule, and the
+            // uploaded plans. None of it belongs to a reusable template.
+            !templateMode && React.createElement(ProjectInfo, { key:'info', info, onChange: setInfo, onChangeType: changeProjectType }),
+            React.createElement(AllowancesPanel, { key:'allow', allowances, onChange: setAllowances }),
+            React.createElement(AddOnsPanel, { key:'addons', addOns, onChange: setAddOns }),
+            !templateMode && React.createElement(DesignDrawingsPanel, { key:'draw', drawings: designDrawings, onChange: setDesignDrawings })
           )
         : React.createElement('div', { style:{flex:1,overflow:'auto',padding:16} },
             // Stats
