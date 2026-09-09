@@ -424,7 +424,7 @@ window.cpParseAllowanceDefaults = function (libraryData) {
       return {
         id:       obj.id || '',
         label:    obj.label,
-        amount:   obj.amount || '$0',
+        amount:   obj.amount || '$ 0',
         included: !!obj.included,   // whether new projects start with it checked
       };
     } catch {
@@ -558,7 +558,7 @@ window.cpSaveAllowanceDefaults = async function (list) {
     .map(a => JSON.stringify({
       id:       a.id || '',
       label:    String(a.label).trim(),
-      amount:   a.amount || '$0',
+      amount:   a.amount || '$ 0',
       included: !!a.included,
     }));
 

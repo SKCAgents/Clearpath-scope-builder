@@ -511,11 +511,13 @@ function ExclusionsPanel({ exclusions, onUpdate }) {
 // ── Design deposit tiers ──────────────────────────────────────────────────────
 // The design deposit is set by the size of the contract, so it can be derived
 // from the preliminary estimate instead of typed in by hand:
-//   under $100,000          → $10,000
-//   $100,000 to $250,000    → $15,000
-//   over $250,000           → $20,000
+//   under $100,000          → $ 10,000
+//   $100,000 to $250,000    → $ 15,000
+//   over $250,000           → $ 20,000
 // Returns '' when the estimate isn't a usable dollar amount (blank, "TBD", …).
-const DEPOSIT_TIERS = ['$10,000', '$15,000', '$20,000'];
+// Written in the spaced "$ 10,000" form that cpMoneyInput normalizes every
+// money field to, so a filled-in tier matches what typing it by hand produces.
+const DEPOSIT_TIERS = ['$ 10,000', '$ 15,000', '$ 20,000'];
 
 function depositForEstimate(estimate) {
   const n = parseFloat(String(estimate || '').replace(/[^0-9.]/g, ''));
@@ -530,6 +532,12 @@ function depositForEstimate(estimate) {
 // typed by hand, so a later estimate edit leaves it alone.
 const AUTO_DEPOSITS = ['', '$5,000', ...DEPOSIT_TIERS];
 
+// Compared by amount rather than by string, so a deposit that predates the
+// spaced format ("$10,000") is still recognised as tier-filled.
+function isAutoDeposit(deposit) {
+  return AUTO_DEPOSITS.some(d => window.cpSameMoney(d, deposit));
+}
+
 
 // ── ProjectInfo ───────────────────────────────────────────────────────────────
 // The left sidebar form where the user fills in project details — name, client,
@@ -538,8 +546,9 @@ const AUTO_DEPOSITS = ['', '$5,000', ...DEPOSIT_TIERS];
 function ProjectInfo({ info, onChange, onChangeType }) {
   // Returns a rendered text input field with a label above it. Pass onInput to
   // override what a keystroke does (the Total Estimate field uses this to fill
-  // in the deposit at the same time).
-  const field = (label, key, placeholder, type = 'text', onInput = null) =>
+  // in the deposit at the same time), and onBlur to reformat on the way out
+  // (the money fields use this to normalize "10000" to "$ 10,000").
+  const field = (label, key, placeholder, type = 'text', onInput = null, onBlur = null) =>
     React.createElement('div', { style: { marginBottom: 14 } },
       React.createElement('label', {
         style: { display: 'block', fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.15em', textTransform: 'uppercase', color: C.goldDark, marginBottom: 4, fontWeight: 500 },
@@ -547,6 +556,7 @@ function ProjectInfo({ info, onChange, onChangeType }) {
       React.createElement('input', {
         type, value: info[key] || '', placeholder,
         onChange: onInput || (e => onChange({ ...info, [key]: e.target.value })),
+        onBlur: onBlur || undefined,
         style: { width: '100%', fontFamily: "'Figtree', sans-serif", fontSize: 14, color: C.slate, border: 'none', borderBottom: `1px solid ${C.border}`, padding: '8px 0', background: 'transparent', outline: 'none' },
       })
     );
@@ -557,8 +567,26 @@ function ProjectInfo({ info, onChange, onChangeType }) {
     const estimate = e.target.value;
     const next = { ...info, estimate };
     const tier = depositForEstimate(estimate);
-    if (tier && AUTO_DEPOSITS.includes((info.deposit || '').trim())) next.deposit = tier;
+    if (tier && isAutoDeposit(info.deposit || '')) next.deposit = tier;
     onChange(next);
+  };
+
+  // Leaving the Price field formats it — and re-runs the tier, so the deposit
+  // ends up formatted too rather than keeping whatever the last keystroke set.
+  const onEstimateBlur = e => {
+    const estimate = window.cpMoneyInput(e.target.value);
+    if (estimate === (info.estimate || '')) return;
+    const next = { ...info, estimate };
+    const tier = depositForEstimate(estimate);
+    if (tier && isAutoDeposit(info.deposit || '')) next.deposit = tier;
+    onChange(next);
+  };
+
+  // Leaving any other money field just formats that one field.
+  const onMoneyBlur = key => e => {
+    const val = window.cpMoneyInput(e.target.value);
+    if (val === (info[key] || '')) return;
+    onChange({ ...info, [key]: val });
   };
 
   // Returns a rendered multi-line textarea with a label above it
@@ -642,7 +670,7 @@ function ProjectInfo({ info, onChange, onChangeType }) {
       textarea('Description', 'description', "A brief overview of the project — what we're building, key features, and goals…", 15),
 
       sectionHeader('Preliminary Price'),
-      field('Price', 'estimate', '$997,972', 'text', onEstimateChange),
+      field('Price', 'estimate', '$ 997,972', 'text', onEstimateChange, onEstimateBlur),
       note(range
         ? `Prints as the total, with a note beneath it: budgetary range ${range.rangeLabel}.`
         : 'Prints as the total, with a ±10% budgetary range noted beneath it.'),
@@ -650,7 +678,7 @@ function ProjectInfo({ info, onChange, onChangeType }) {
       sectionHeader('Design Deposit'),
       React.createElement('div', { style: { fontFamily: "'Figtree', sans-serif", fontSize: 10, color: C.goldDark, marginTop: -6, marginBottom: 12, fontStyle: 'italic' } },
         'Set from the price — type over it to use a different amount'),
-      field('Deposit Amount', 'deposit',     '$15,000'),
+      field('Deposit Amount', 'deposit',     '$ 15,000', 'text', null, onMoneyBlur('deposit')),
       field('Deposit Memo',   'depositMemo', 'e.g. Walter Addition Design Fee'),
 
       sectionHeader('Schedule'),
@@ -699,8 +727,9 @@ function AddOnsPanel({ addOns, onChange }) {
             style: { flex: 2, fontFamily: "'Figtree', sans-serif", fontSize: 11, border: 'none', borderBottom: `1px solid ${C.border}`, padding: '4px 0', background: 'transparent', outline: 'none', color: C.slate, fontWeight: 500 },
           }),
           React.createElement('input', {
-            value: a.amount || '', placeholder: '$0',
+            value: a.amount || '', placeholder: '$ 0',
             onChange: e => { const n = [...addOns]; n[i] = { ...n[i], amount: e.target.value }; onChange(n); },
+            onBlur: e => { const v = window.cpMoneyInput(e.target.value); if (v === (a.amount || '')) return; const n = [...addOns]; n[i] = { ...n[i], amount: v }; onChange(n); },
             style: { flex: 1, fontFamily: "'Figtree', sans-serif", fontSize: 11, border: 'none', borderBottom: `1px solid ${C.border}`, padding: '4px 0', background: 'transparent', outline: 'none', color: C.magnolia, fontWeight: 500, textAlign: 'right' },
           }),
           React.createElement('button', {
@@ -796,8 +825,9 @@ function AllowancesPanel({ allowances, onChange }) {
         }, a.label),
         React.createElement('input', {
           value: a.amount || '',
-          placeholder: '$0',
+          placeholder: '$ 0',
           onChange: e => patch(i, { amount: e.target.value }),
+          onBlur: e => { const v = window.cpMoneyInput(e.target.value); if (v !== (a.amount || '')) patch(i, { amount: v }); },
           style: { flex: 1, fontFamily: "'Figtree', sans-serif", fontSize: 11, border: 'none', borderBottom: `1px solid ${C.border}`, padding: '4px 0', background: 'transparent', outline: 'none', color: C.magnolia, fontWeight: 500, textAlign: 'right' },
         }),
         // Fixed categories can't be removed — unchecking is how you exclude one.

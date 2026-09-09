@@ -19,6 +19,11 @@ function ScopeDocument({ info, sections, exclusions, allowances, addOns = [], de
   // the two phase durations. All of that logic lives in ScopeSchedule.js, which
   // the script tags load before this file.
   const range = window.cpPriceRange(info.estimate);
+
+  // Every dollar amount prints through the same normalizer the editor's money
+  // fields use on blur, so projects saved before that existed still read as
+  // "$ 10,000". Non-amounts ("TBD", a hand-typed range) pass through unchanged.
+  const money = window.cpMoneyInput;
   const sched = window.cpComputeSchedule(info);
 
   // Styles
@@ -65,7 +70,7 @@ function ScopeDocument({ info, sections, exclusions, allowances, addOns = [], de
     },
       React.createElement('div', {
         style: { fontFamily:"'Cormorant Garamond', Georgia, serif", fontWeight:500, fontSize:26, color:magnolia, lineHeight:1, whiteSpace:'nowrap' }
-      }, amount),
+      }, money(amount)),
       React.createElement('div', {},
         React.createElement('div', { style:{ fontFamily:"'Figtree', sans-serif", fontWeight:500, fontSize:9, letterSpacing:'0.12em', textTransform:'uppercase', color:slate, marginBottom:3 } }, label),
         desc && React.createElement('div', { style:{ fontFamily:"'Figtree', sans-serif", fontWeight:300, fontSize:10, lineHeight:1.5, color:slate, opacity:0.8 } }, desc)
@@ -178,7 +183,7 @@ function ScopeDocument({ info, sections, exclusions, allowances, addOns = [], de
         },
           React.createElement('div', {},
             React.createElement('div', { style:{ fontFamily:"'Figtree', sans-serif", fontSize:9, letterSpacing:'0.2em', textTransform:'uppercase', color:gold, marginBottom:8 } }, 'Preliminary Estimated Total'),
-            React.createElement('div', { style:{ fontFamily:"'Cormorant Garamond', Georgia, serif", fontWeight:500, fontSize:42, color:offwhite, lineHeight:1 } }, info.estimate),
+            React.createElement('div', { style:{ fontFamily:"'Cormorant Garamond', Georgia, serif", fontWeight:500, fontSize:42, color:offwhite, lineHeight:1 } }, money(info.estimate)),
             range && React.createElement('div', { style:{ fontFamily:"'Figtree', sans-serif", fontSize:11, color:'rgba(239,236,232,0.65)', marginTop:8 } },
               `Budgetary range: ${range.rangeLabel}`
             ),
@@ -202,7 +207,7 @@ function ScopeDocument({ info, sections, exclusions, allowances, addOns = [], de
               }, a.title || 'Add-On'),
               a.amount && React.createElement('div', {
                 style:{ fontFamily:"'Cormorant Garamond', Georgia, serif", fontWeight:500, fontSize:22, color:magnolia, whiteSpace:'nowrap' }
-              }, a.amount)
+              }, money(a.amount))
             ),
             a.desc && React.createElement('p', {
               style:{ fontFamily:"'Figtree', sans-serif", fontWeight:300, fontSize:11, lineHeight:1.65, color:slate, whiteSpace:'pre-wrap' }
@@ -282,7 +287,7 @@ function ScopeDocument({ info, sections, exclusions, allowances, addOns = [], de
           [
             `Review and approve this scope of work.`,
             `Sign the Design Agreement via DocuSign.`,
-            `Submit the Design Deposit of ${info.deposit} via USPS Certified Mail.`,
+            `Submit the Design Deposit of ${money(info.deposit)} via USPS Certified Mail.`,
             `We'll schedule your design selections session with our professional designer.`
           ].map((text, i) =>
             React.createElement('div', {
@@ -298,7 +303,7 @@ function ScopeDocument({ info, sections, exclusions, allowances, addOns = [], de
           style:{ background:'#F5F2EF', borderLeft:`3px solid ${magnolia}`, padding:'16px 20px', marginTop:8 }
         },
           React.createElement('div', { style:{ fontFamily:"'Figtree', sans-serif", fontSize:9, letterSpacing:'0.2em', textTransform:'uppercase', color:goldDark, marginBottom:10, fontWeight:500 } }, 'Design Deposit — Payment Details'),
-          [['Make Check Payable To','ClearPath Construction'],['Amount',info.deposit],['Memo',info.depositMemo],['Mail To','ClearPath Construction  ·  416 W Main St., Lebanon, TN 37087  ·  Via USPS Certified Mail']].map(([l,v],i)=>
+          [['Make Check Payable To','ClearPath Construction'],['Amount',money(info.deposit)],['Memo',info.depositMemo],['Mail To','ClearPath Construction  ·  416 W Main St., Lebanon, TN 37087  ·  Via USPS Certified Mail']].map(([l,v],i)=>
             React.createElement('div', { key:i, style:{ display:'flex', gap:20, marginBottom:6, alignItems:'center' } },
               React.createElement('span', { style:{ fontFamily:"'Figtree', sans-serif", fontWeight:500, fontSize:10, width:160, flexShrink:0 } }, l),
               React.createElement('span', { style:{ fontFamily:l==='Amount'?"'Cormorant Garamond',Georgia,serif":"'Figtree',sans-serif", fontSize:l==='Amount'?16:10, fontWeight:300, color:l==='Amount'?magnolia:slate } }, v)

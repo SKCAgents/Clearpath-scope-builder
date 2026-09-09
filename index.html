@@ -329,7 +329,7 @@ function initAllowances(libraryData) {
   return source.map(c => ({
     id:       c.id || allowanceIdFor(c.label),
     label:    c.label,
-    amount:   c.amount || '$0',
+    amount:   c.amount || '$ 0',
     included: !!c.included,
   }));
 }
@@ -397,7 +397,7 @@ const DEFAULT_INFO = {
   estimate: '',
   designWeeks:       CP_DEFAULT_DESIGN_WEEKS,
   constructionWeeks: CP_DEFAULT_CONSTRUCTION_WEEKS,
-  deposit: '$5,000', depositMemo: '',
+  deposit: '$ 5,000', depositMemo: '',
 };
 
 

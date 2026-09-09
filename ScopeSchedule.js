@@ -177,11 +177,47 @@ function cpParseMoney(value) {
   return isFinite(n) ? n : null;
 }
 
-// "$997,972" — no cents. ScopeDocx.js runs its own money() over these to add
-// the space after the dollar sign that the Word template uses.
+// "$ 997,972" — no cents, and the space after the dollar sign that every
+// generated document uses, so derived labels match the typed fields.
 function cpFormatMoney(n) {
   if (typeof n !== 'number' || !isFinite(n)) return '';
-  return '$' + Math.round(n).toLocaleString('en-US');
+  return '$ ' + Math.round(n).toLocaleString('en-US');
+}
+
+// What a money input field shows once the user leaves it: "$ 10,000", the
+// spaced form used throughout the generated documents. Typing is never
+// reformatted mid-keystroke — this runs on blur — so the caret can't jump.
+//
+// Only a single plain amount is normalized. Anything else the field might
+// legitimately hold ("TBD", "See allowance schedule", "$50,000 - $75,000") is
+// returned untouched, so this can be wired to every dollar field safely.
+// Cents are kept only when the user actually typed a non-zero fraction.
+const CP_MONEY_INPUT_RE = /^\s*\$?\s*([0-9][0-9,]*)(?:\.([0-9]{0,2}))?\s*$/;
+
+function cpMoneyInput(raw) {
+  const str = String(raw == null ? '' : raw);
+  if (!str.trim()) return '';
+
+  const m = str.match(CP_MONEY_INPUT_RE);
+  if (!m) return str;
+
+  const whole = parseInt(m[1].replace(/,/g, ''), 10);
+  if (!isFinite(whole)) return str;
+
+  const cents = (m[2] || '').padEnd(2, '0');
+  const frac  = cents === '00' ? '' : '.' + cents;
+  return '$ ' + whole.toLocaleString('en-US') + frac;
+}
+
+// Two money strings that mean the same amount, for comparisons that must not
+// care whether a value has been through cpMoneyInput yet ("$10,000" vs
+// "$ 10,000"). Non-numeric text compares as its trimmed self.
+function cpSameMoney(a, b) {
+  const key = v => {
+    const n = cpParseMoney(v);
+    return n === null ? String(v == null ? '' : v).trim() : n;
+  };
+  return key(a) === key(b);
 }
 
 // The range that gets printed. Rounded outward — low floors, high ceilings — so
@@ -213,6 +249,6 @@ Object.assign(window, {
   cpStartOfDay, cpAddDays, cpAddWeeks,
   cpThanksgiving, cpChristmas, cpHolidaysIn, cpExtendForHolidays,
   cpComputeSchedule, cpFormatDate, cpJoinNames, cpWeeks,
-  cpParseMoney, cpFormatMoney, cpPriceRange,
+  cpParseMoney, cpFormatMoney, cpMoneyInput, cpSameMoney, cpPriceRange,
   CP_DEFAULT_DESIGN_WEEKS, CP_DEFAULT_CONSTRUCTION_WEEKS, CP_RANGE_PCT, CP_RANGE_DISCLAIMER,
 });

@@ -53,11 +53,19 @@ const C_BORDER = 'ECE8E3';
 // this or Word pushes the table past the right margin.
 const CONTENT_W = 9360;
 
-// Normalize money strings so the dollar sign is always followed by a single
-// space: "$1,000" -> "$ 1,000", "$—" -> "$ —". Leaves values with no "$" alone.
+// Normalize money strings for the document: a bare amount gets the dollar sign
+// and thousands separators ("10000" -> "$ 10,000"), and an amount that already
+// has a dollar sign gets the single space after it that this template uses
+// ("$1,000" -> "$ 1,000"). Runs cpMoneyInput first — the same normalizer the
+// editor's money fields use — so old projects saved before those fields
+// formatted on blur still print consistently. Anything that isn't a single
+// plain amount ("$ —", "TBD") only gets the dollar-sign spacing.
 function money(val) {
   if (val == null) return '';
-  return String(val).replace(/\$\s*/g, '$ ');
+  const normalized = typeof window.cpMoneyInput === 'function'
+    ? window.cpMoneyInput(val)
+    : String(val);
+  return String(normalized).replace(/\$\s*/g, '$ ');
 }
 
 async function generateScopeDocx({ info, sections, exclusions, allowances, addOns = [], designDrawings = [] }) {

@@ -285,17 +285,17 @@ const EXCLUSION_LIBRARY = [
 // appliances). The $0 entries are placeholders — set them once in the admin
 // screen and every new project picks them up.
 const ALLOWANCE_CATEGORIES = [
-  { id: 'doors_windows',        label: 'Doors & Windows',        amount: '$0',      included: false },
-  { id: 'millwork',             label: 'Millwork',               amount: '$0',      included: false },
-  { id: 'cabinets_countertops', label: 'Cabinets & Countertops', amount: '$0',      included: false },
-  { id: 'plumbing_fixtures',    label: 'Plumbing Fixtures',      amount: '$11,000', included: false },
-  { id: 'lighting_fixtures',    label: 'Lighting Fixtures',      amount: '$2,000',  included: false },
-  { id: 'appliances',           label: 'Appliances',             amount: '$30,000', included: false },
-  { id: 'tile',                 label: 'Tile',                   amount: '$0',      included: false },
-  { id: 'flooring',             label: 'Flooring',               amount: '$0',      included: false },
-  { id: 'paint',                label: 'Paint',                  amount: '$0',      included: false },
-  { id: 'mirrors',              label: 'Mirrors',                amount: '$0',      included: false },
-  { id: 'bath_hardware',        label: 'Bath Hardware',          amount: '$0',      included: false },
+  { id: 'doors_windows',        label: 'Doors & Windows',        amount: '$ 0',      included: false },
+  { id: 'millwork',             label: 'Millwork',               amount: '$ 0',      included: false },
+  { id: 'cabinets_countertops', label: 'Cabinets & Countertops', amount: '$ 0',      included: false },
+  { id: 'plumbing_fixtures',    label: 'Plumbing Fixtures',      amount: '$ 11,000', included: false },
+  { id: 'lighting_fixtures',    label: 'Lighting Fixtures',      amount: '$ 2,000',  included: false },
+  { id: 'appliances',           label: 'Appliances',             amount: '$ 30,000', included: false },
+  { id: 'tile',                 label: 'Tile',                   amount: '$ 0',      included: false },
+  { id: 'flooring',             label: 'Flooring',               amount: '$ 0',      included: false },
+  { id: 'paint',                label: 'Paint',                  amount: '$ 0',      included: false },
+  { id: 'mirrors',              label: 'Mirrors',                amount: '$ 0',      included: false },
+  { id: 'bath_hardware',        label: 'Bath Hardware',          amount: '$ 0',      included: false },
 ];
 
 // The library row id that holds the admin override of the amounts above.

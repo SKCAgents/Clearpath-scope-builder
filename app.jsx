@@ -822,7 +822,7 @@ function buildTemplateView(libraryData) {
   const allowanceDefaults = (saved || (window.ALLOWANCE_CATEGORIES || [])).map(c => ({
     id:       c.id || '',
     label:    c.label,
-    amount:   c.amount || '$0',
+    amount:   c.amount || '$ 0',
     included: !!c.included,
   }));
 
@@ -1082,7 +1082,7 @@ function TemplateAllowanceDefaults({ initial, hasOverride }) {
     // if a category is deleted and a similarly named one added later. The id is
     // what existing projects match on, so it must not be reused.
     const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'category';
-    setRows(a => [...a, { id: 'alw_' + slug + '_' + Date.now().toString(36), label, amount: '$0', included: false }]);
+    setRows(a => [...a, { id: 'alw_' + slug + '_' + Date.now().toString(36), label, amount: '$ 0', included: false }]);
     setNewLabel('');
     touched();
   }
@@ -1156,8 +1156,9 @@ function TemplateAllowanceDefaults({ initial, hasOverride }) {
               />
               <input
                 value={r.amount || ''}
-                placeholder="$0"
+                placeholder="$ 0"
                 onChange={e => setField(i, { amount: e.target.value })}
+                onBlur={e => { const v = window.cpMoneyInput(e.target.value); if (v !== (r.amount || '')) setField(i, { amount: v }); }}
                 style={{ width: 110, fontFamily: "'Figtree', sans-serif", fontSize: 12, border: `1px solid ${C.border}`, padding: '5px 8px', color: C.magnolia, fontWeight: 500, textAlign: 'right', outline: 'none', background: 'white' }}
               />
               <button onClick={() => move(i, -1)} disabled={i === 0} title="Move up" style={arrowBtn(i === 0)}>↑</button>
