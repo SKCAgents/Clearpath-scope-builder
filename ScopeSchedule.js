@@ -47,6 +47,34 @@ function cpAddWeeks(d, n) {
   return cpAddDays(d, n * 7);
 }
 
+// The default design start: the first Monday at least 7 days out. Gives the
+// client a week to review and sign before anything is committed to, and lands
+// the start on a Monday so a phase reads as whole working weeks.
+function cpNextMonday(from) {
+  const earliest = cpAddDays(from ? new Date(from) : new Date(), 7);
+  // getDay(): Sunday 0, Monday 1. Step forward to the next Monday; already a
+  // Monday stays put, since it is already 7 days out.
+  return cpAddDays(earliest, (8 - earliest.getDay()) % 7);
+}
+
+// "2026-09-21" (the value an <input type="date"> holds) → local midnight.
+// Deliberately not `new Date(str)`, which reads a bare date as UTC and lands on
+// the previous day for anyone west of Greenwich. Returns null for blank or
+// unparseable input, so callers can fall back to the derived start.
+function cpParseDateInput(str) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(str || '').trim());
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return isNaN(d) ? null : d;
+}
+
+// A Date back into the "2026-09-21" form an <input type="date"> expects.
+function cpToDateInput(d) {
+  if (!(d instanceof Date) || isNaN(d)) return '';
+  const pad = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+}
+
 
 // ── Holidays ──────────────────────────────────────────────────────────────────
 // Only two dates matter, and only because the trades effectively stand down for
@@ -123,7 +151,11 @@ function cpComputeSchedule(info, from) {
   const designWeeks       = cpWeeks(info?.designWeeks,       CP_DEFAULT_DESIGN_WEEKS);
   const constructionWeeks = cpWeeks(info?.constructionWeeks, CP_DEFAULT_CONSTRUCTION_WEEKS);
 
-  const designStart = cpStartOfDay(from ? new Date(from) : new Date());
+  // The design start is either pinned by hand (info.designStartDate, set from
+  // the date picker) or derived as the next Monday at least a week out. A
+  // pinned date is fixed, so the schedule stops drifting with today's date.
+  const pinned      = cpParseDateInput(info?.designStartDate);
+  const designStart = pinned ? cpStartOfDay(pinned) : cpNextMonday(from);
   const design      = cpExtendForHolidays(designStart, designWeeks);
 
   const constructionStart = design.end;   // construction starts when design completes
@@ -133,6 +165,7 @@ function cpComputeSchedule(info, from) {
 
   return {
     designStart,
+    designStartPinned:    !!pinned,   // false ⇒ the dates drift with today
     designComplete:       design.end,
     constructionStart,
     constructionComplete: construction.end,
@@ -247,6 +280,7 @@ const CP_RANGE_DISCLAIMER =
 // the app.
 Object.assign(window, {
   cpStartOfDay, cpAddDays, cpAddWeeks,
+  cpNextMonday, cpParseDateInput, cpToDateInput,
   cpThanksgiving, cpChristmas, cpHolidaysIn, cpExtendForHolidays,
   cpComputeSchedule, cpFormatDate, cpJoinNames, cpWeeks,
   cpParseMoney, cpFormatMoney, cpMoneyInput, cpSameMoney, cpPriceRange,

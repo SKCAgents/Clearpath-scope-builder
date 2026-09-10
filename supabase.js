@@ -173,6 +173,10 @@ window.cpCopyProject = async function (sourceId, overrides) {
     // Re-stamp the prepared date rather than inheriting the source's — an old
     // date on a brand-new scope reads as stale to the client.
     date:        new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+    // Same reasoning for a pinned design start: the source's date is very
+    // likely in the past. Clearing it puts the copy back on the derived next
+    // Monday, which the user can re-pin.
+    designStartDate: '',
   };
 
   return window.cpCreateProject({

@@ -609,6 +609,34 @@ function ProjectInfo({ info, onChange, onChangeType }) {
       style: { fontFamily: "'Figtree', sans-serif", fontSize: 10, lineHeight: 1.5, color: C.goldDark, marginTop: -8, marginBottom: 14, fontStyle: italic ? 'italic' : 'normal' },
     }, text);
 
+  // Design start picker. Blank means "derive it" — the next Monday at least a
+  // week out, recomputed every render — so the field starts empty and the note
+  // underneath says what the document will actually print. Picking a date pins
+  // it, and Use next Monday clears the field to go back to deriving.
+  const designStartField = () => {
+    const pinned = !!info.designStartDate;
+    return React.createElement('div', { style: { marginBottom: 14 } },
+      React.createElement('label', {
+        style: { display: 'block', fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.15em', textTransform: 'uppercase', color: C.goldDark, marginBottom: 4, fontWeight: 500 },
+      }, 'Design Start'),
+      React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
+        React.createElement('input', {
+          type: 'date',
+          value: info.designStartDate || window.cpToDateInput(sched.designStart),
+          onChange: e => onChange({ ...info, designStartDate: e.target.value }),
+          style: { fontFamily: "'Figtree', sans-serif", fontSize: 14, color: C.slate, border: 'none', borderBottom: `1px solid ${C.border}`, padding: '8px 0', background: 'transparent', outline: 'none' },
+        }),
+        pinned && React.createElement('button', {
+          onClick: () => onChange({ ...info, designStartDate: '' }),
+          style: { background: 'none', border: `1px solid ${C.border}`, cursor: 'pointer', padding: '3px 7px', color: C.goldDark, fontFamily: "'Figtree', sans-serif", fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', whiteSpace: 'nowrap' },
+        }, 'Use next Monday')
+      ),
+      note(pinned
+        ? 'Fixed date — the schedule below is counted from it and will not shift.'
+        : `Not set, so it follows the next Monday at least a week out — ${window.cpFormatDate(sched.designStart)} today. Pick a date to pin it.`)
+    );
+  };
+
   // Whole-week duration input. Blank falls back to the default at render time
   // (see cpWeeks), so clearing the box doesn't produce a broken schedule.
   const weeksField = (label, key, fallback) =>
@@ -682,6 +710,7 @@ function ProjectInfo({ info, onChange, onChangeType }) {
       field('Deposit Memo',   'depositMemo', 'e.g. Walter Addition Design Fee'),
 
       sectionHeader('Potential Schedule'),
+      designStartField(),
       weeksField('Design Duration',       'designWeeks',       CP_DEFAULT_DESIGN_WEEKS),
       weeksField('Construction Duration', 'constructionWeeks', CP_DEFAULT_CONSTRUCTION_WEEKS),
       // Read-only preview of the dates the document will print. Recomputed on
@@ -699,9 +728,12 @@ function ProjectInfo({ info, onChange, onChangeType }) {
           )
         ),
         React.createElement('div', { style: { fontFamily: "'Figtree', sans-serif", fontSize: 9, lineHeight: 1.5, color: C.goldDark, marginTop: 8, fontStyle: 'italic' } },
-          holidays.length
-            ? `Counted from today. Includes an extra week for ${window.cpJoinNames(holidays)}.`
-            : 'Counted from today — exporting on a later date shifts these dates.')
+          [
+            sched.designStartPinned
+              ? 'Counted from the design start above.'
+              : 'Counted from the next Monday a week out — exporting on a later date shifts these dates.',
+            holidays.length ? `Includes an extra week for ${window.cpJoinNames(holidays)}.` : '',
+          ].filter(Boolean).join(' '))
       ),
       textarea('Schedule Notes',    'scheduleNotes',  'Optional notes on phasing, milestones, or scheduling considerations…', 3),
     )
