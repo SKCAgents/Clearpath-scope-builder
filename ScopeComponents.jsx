@@ -681,7 +681,7 @@ function ProjectInfo({ info, onChange, onChangeType }) {
       field('Deposit Amount', 'deposit',     '$ 15,000', 'text', null, onMoneyBlur('deposit')),
       field('Deposit Memo',   'depositMemo', 'e.g. Walter Addition Design Fee'),
 
-      sectionHeader('Schedule'),
+      sectionHeader('Potential Schedule'),
       weeksField('Design Duration',       'designWeeks',       CP_DEFAULT_DESIGN_WEEKS),
       weeksField('Construction Duration', 'constructionWeeks', CP_DEFAULT_CONSTRUCTION_WEEKS),
       // Read-only preview of the dates the document will print. Recomputed on

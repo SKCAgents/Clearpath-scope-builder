@@ -340,7 +340,7 @@ async function generateScopeDocx({ info, sections, exclusions, allowances, addOn
   // ScopeSchedule.js for the arithmetic and the holiday rule.
   {
     const sched = window.cpComputeSchedule(info);
-    sectionsContent.push(sectionHeading('Schedule'));
+    sectionsContent.push(sectionHeading('Potential Schedule'));
 
     const GAP = 240;   // blank spacer column between cards
 

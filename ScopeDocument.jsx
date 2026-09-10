@@ -221,7 +221,7 @@ function ScopeDocument({ info, sections, exclusions, allowances, addOns = [], de
       // is unconditional: cpComputeSchedule always returns a full schedule from
       // today plus the two phase durations (defaults included).
       React.createElement('div', {},
-        React.createElement(SecTitle, { text:'Schedule' }),
+        React.createElement(SecTitle, { text:'Potential Schedule' }),
         React.createElement('div', {
           style:{ display:'grid', gridTemplateColumns:'repeat(2, 1fr)', gap:16, marginBottom:14 }
         },

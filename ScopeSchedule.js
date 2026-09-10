@@ -102,8 +102,8 @@ function cpExtendForHolidays(start, weeks) {
 
 // ── Schedule ──────────────────────────────────────────────────────────────────
 
-const CP_DEFAULT_DESIGN_WEEKS = 6;
-const CP_DEFAULT_CONSTRUCTION_WEEKS = 5;
+const CP_DEFAULT_DESIGN_WEEKS = 12;
+const CP_DEFAULT_CONSTRUCTION_WEEKS = 12;
 
 // Read a duration out of project info, falling back to the default when the
 // field is blank, non-numeric, or nonsensical. Whole weeks only.
